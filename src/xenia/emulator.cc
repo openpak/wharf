@@ -2551,6 +2551,10 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
     const X_STATUS wait = init->Wait(0, 0, 0, &timeout);
     XELOGI("real_xam: xam.xex entry point finished with wait status {:08X}",
            wait);
+    const auto* state_ptr =
+        memory()->TranslateVirtual<const xe::be<uint32_t>*>(0x81A9F850);
+    XELOGI("real_xam: xam state pointer at 81A9F850 = {:08X}",
+           static_cast<uint32_t>(*state_ptr));
   }
 
   on_launch(title_id_.value(), title_name_);

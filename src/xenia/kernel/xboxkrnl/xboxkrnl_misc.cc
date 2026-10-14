@@ -290,6 +290,70 @@ dword_result_t LDIDestroyDecompression_entry(dword_t handle) {
 }
 DECLARE_XBOXKRNL_EXPORT1(LDIDestroyDecompression, kNone, kImplemented);
 
+// Exports the real xam.xex calls at start-up (real_xam). Each answers success
+// with nothing happening, until something needs more.
+dword_result_t HidGetLastInputTime_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(HidGetLastInputTime, kNone, kStub);
+
+dword_result_t XInputdGetLastTextInputTime_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(XInputdGetLastTextInputTime, kNone, kStub);
+
+dword_result_t XInputdSetFailedConnectionOrBindCallback_entry(
+    dword_t callback) {
+  return 0;
+}
+DECLARE_XBOXKRNL_EXPORT1(XInputdSetFailedConnectionOrBindCallback, kNone,
+                         kStub);
+
+dword_result_t EtxProducerRegister_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(EtxProducerRegister, kNone, kStub);
+
+dword_result_t KeSetPriorityClassThread_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(KeSetPriorityClassThread, kNone, kStub);
+
+dword_result_t XexShimLock_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(XexShimLock, kNone, kStub);
+
+dword_result_t XeKeysGetStatus_entry(lpdword_t status) {
+  if (status) {
+    *status = 0;
+  }
+  return X_STATUS_SUCCESS;
+}
+DECLARE_XBOXKRNL_EXPORT1(XeKeysGetStatus, kNone, kStub);
+
+dword_result_t IoDismountVolumeByName_entry(dword_t name) {
+  return X_STATUS_SUCCESS;
+}
+DECLARE_XBOXKRNL_EXPORT1(IoDismountVolumeByName, kNone, kStub);
+
+dword_result_t HalGetPowerUpCause_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(HalGetPowerUpCause, kNone, kStub);
+
+dword_result_t DrvSetUserBindingCallback_entry(dword_t callback) { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(DrvSetUserBindingCallback, kNone, kStub);
+
+dword_result_t DrvSetMicArrayStartCallback_entry(dword_t callback) {
+  return 0;
+}
+DECLARE_XBOXKRNL_EXPORT1(DrvSetMicArrayStartCallback, kNone, kStub);
+
+dword_result_t DrvSetDeviceConfigChangeCallback_entry(dword_t callback) {
+  return 0;
+}
+DECLARE_XBOXKRNL_EXPORT1(DrvSetDeviceConfigChangeCallback, kNone, kStub);
+
+dword_result_t DrvSetContentStorageCallback_entry(dword_t callback) {
+  return 0;
+}
+DECLARE_XBOXKRNL_EXPORT1(DrvSetContentStorageCallback, kNone, kStub);
+
+dword_result_t DrvSetAudioLatencyCallback_entry(dword_t callback) { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(DrvSetAudioLatencyCallback, kNone, kStub);
+
+dword_result_t DrvGetContentStorageNotification_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(DrvGetContentStorageNotification, kNone, kStub);
+
 }  // namespace xboxkrnl
 }  // namespace kernel
 }  // namespace xe
