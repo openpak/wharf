@@ -354,6 +354,38 @@ DECLARE_XBOXKRNL_EXPORT1(DrvSetAudioLatencyCallback, kNone, kStub);
 dword_result_t DrvGetContentStorageNotification_entry() { return 0; }
 DECLARE_XBOXKRNL_EXPORT1(DrvGetContentStorageNotification, kNone, kStub);
 
+// Second round (real_xam): crash-dump, NIC and video exports XAM touches while
+// it starts. The NIC reports no link until a virtual one exists.
+dword_result_t DumpGetRawDumpInfo_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(DumpGetRawDumpInfo, kNone, kStub);
+
+dword_result_t DumpRegisterDedicatedDataBlock_entry(dword_t id, dword_t ptr,
+                                                    dword_t size) {
+  return 0;
+}
+DECLARE_XBOXKRNL_EXPORT1(DumpRegisterDedicatedDataBlock, kNone, kStub);
+
+dword_result_t HalRegisterHdDvdRomNotification_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(HalRegisterHdDvdRomNotification, kNone, kStub);
+
+dword_result_t NicAttach_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(NicAttach, kNone, kStub);
+
+dword_result_t NicGetLinkState_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(NicGetLinkState, kNone, kStub);
+
+dword_result_t NicGetOpt_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(NicGetOpt, kNone, kStub);
+
+dword_result_t NicSetUnicastAddress_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(NicSetUnicastAddress, kNone, kStub);
+
+dword_result_t HalGetNotedArgonErrors_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(HalGetNotedArgonErrors, kNone, kStub);
+
+dword_result_t VdSetStudioRGBMode_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(VdSetStudioRGBMode, kNone, kStub);
+
 }  // namespace xboxkrnl
 }  // namespace kernel
 }  // namespace xe

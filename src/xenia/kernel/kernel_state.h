@@ -253,6 +253,13 @@ class KernelState {
 
   // The real xam.xex that xam.xex imports resolve to, when set (real_xam).
   void SetRealXamModule(object_ref<UserModule> module);
+  // While the real xam.xex initializes, every thread but |init_thread| waits at
+  // its start, so its thread-attach call finds XAM ready.
+  void BeginRealXamInit(XThread* init_thread) {
+    real_xam_init_thread_ = init_thread;
+    real_xam_ready_.store(false);
+  }
+  void EndRealXamInit() { real_xam_ready_.store(true); }
 
   object_ref<XThread> LaunchModule(object_ref<UserModule> module);
   object_ref<UserModule> GetExecutableModule();
@@ -441,6 +448,8 @@ class KernelState {
   std::vector<object_ref<KernelModule>> kernel_modules_;
   std::vector<object_ref<UserModule>> user_modules_;
   object_ref<UserModule> real_xam_module_;
+  XThread* real_xam_init_thread_ = nullptr;
+  std::atomic<bool> real_xam_ready_{true};
   std::vector<TerminateNotification> terminate_notifications_;
   uint32_t kernel_guest_globals_ = 0;
 

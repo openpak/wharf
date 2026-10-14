@@ -2296,6 +2296,18 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
       return X_STATUS_NOT_FOUND;
     }
     kernel_state_->SetRealXamModule(real_xam);
+    // Experiment: the 6,536-byte state block is requested from heap class 1,
+    // whose heap 0 is only created inside that state's Initialize. Send it to
+    // heap 1 (subfe r3,r10,r9 at 816E5EEC becomes li r3,1).
+    {
+      auto* insn = memory()->TranslateVirtual<xe::be<uint32_t>*>(0x816E5EEC);
+      XELOGI("real_xam: instruction at 816E5EEC is {:08X}",
+             static_cast<uint32_t>(*insn));
+      if (static_cast<uint32_t>(*insn) == 0x7C6A4910) {
+        *insn = 0x38600001;
+        XELOGI("real_xam: patched 816E5EEC to li r3,1");
+      }
+    }
     const X_STATUS xam_result =
         kernel_state_->FinishLoadingUserModule(real_xam, false);
     if (XFAILED(xam_result)) {
@@ -2543,12 +2555,14 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
         real_xam->entry_point(), real_xam->handle(), 0, true));
     init->set_name("real xam init");
     init->SetExtraStartArgs({1, 0});
+    kernel_state()->BeginRealXamInit(init.get());
     if (XFAILED(init->Create())) {
       XELOGE("real_xam: could not start the xam.xex entry point");
       return X_STATUS_UNSUCCESSFUL;
     }
     uint64_t timeout = static_cast<uint64_t>(-30 * 10000000LL);
     const X_STATUS wait = init->Wait(0, 0, 0, &timeout);
+    kernel_state()->EndRealXamInit();
     XELOGI("real_xam: xam.xex entry point finished with wait status {:08X}",
            wait);
     const auto* state_ptr =

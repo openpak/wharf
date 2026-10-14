@@ -1024,6 +1024,10 @@ void KernelState::UnregisterThread(XThread* thread) {
 }
 
 void KernelState::OnThreadExecute(XThread* thread) {
+  while (!real_xam_ready_.load() && thread != real_xam_init_thread_) {
+    GuestScheduler::SpinYield(std::chrono::milliseconds(1));
+  }
+
   auto global_lock = global_critical_region_.Acquire();
 
   // Must be called on executing thread.
