@@ -251,6 +251,9 @@ class KernelState {
   object_ref<XModule> GetModule(const std::string_view name,
                                 bool user_only = false);
 
+  // The real xam.xex that xam.xex imports resolve to, when set (real_xam).
+  void SetRealXamModule(object_ref<UserModule> module);
+
   object_ref<XThread> LaunchModule(object_ref<UserModule> module);
   object_ref<UserModule> GetExecutableModule();
   void SetExecutableModule(object_ref<UserModule> module);
@@ -437,6 +440,7 @@ class KernelState {
   object_ref<UserModule> executable_module_;
   std::vector<object_ref<KernelModule>> kernel_modules_;
   std::vector<object_ref<UserModule>> user_modules_;
+  object_ref<UserModule> real_xam_module_;
   std::vector<TerminateNotification> terminate_notifications_;
   uint32_t kernel_guest_globals_ = 0;
 

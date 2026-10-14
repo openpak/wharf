@@ -44,6 +44,7 @@
 #include "xenia/kernel/user_module.h"
 #include "xenia/kernel/xam/achievement_manager.h"
 #include "xenia/kernel/xam/ui/disc_swap_ui.h"
+#include "xenia/kernel/kernel_flags.h"
 #include "xenia/kernel/xam/xam_module.h"
 #include "xenia/kernel/xam/xdbf/spa_info.h"
 #include "xenia/kernel/xbdm/xbdm_module.h"
@@ -823,6 +824,10 @@ X_STATUS Emulator::LaunchXexFile(const std::filesystem::path& path) {
   // System related symlinks. This should point to dashboard location in the
   // future.
   file_system_->RegisterSymbolicLink("\\SystemRoot", mount_path);
+
+  if (cvars::real_xam) {
+    return X_STATUS_SUCCESS;
+  }
 
   auto module = kernel_state_->LoadUserModule("xam.xex");
 
@@ -2275,6 +2280,31 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
     return result;
   }
 
+  // The dashboard links its xam.xex imports in FinishLoadingUserModule, so the
+  // real xam.xex has to be loaded by then.
+  kernel::object_ref<kernel::UserModule> real_xam;
+  if (cvars::real_xam && kernel::IsSystemTitle(module->title_id())) {
+    const std::string base = utf8::find_base_guest_path(module->path());
+    real_xam = kernel_state_->LoadUserModule(
+        utf8::join_guest_paths(base, "xam.xex"), false);
+    if (!real_xam) {
+      real_xam = kernel_state_->LoadUserModule(
+          utf8::join_guest_paths(base, "$flash_xam.xex"), false);
+    }
+    if (!real_xam) {
+      XELOGE("real_xam: no xam.xex or $flash_xam.xex in {}", base);
+      return X_STATUS_NOT_FOUND;
+    }
+    kernel_state_->SetRealXamModule(real_xam);
+    const X_STATUS xam_result =
+        kernel_state_->FinishLoadingUserModule(real_xam, false);
+    if (XFAILED(xam_result)) {
+      XELOGE("real_xam: failed to link the real xam.xex: {:08X}", xam_result);
+      return xam_result;
+    }
+    XELOGI("real_xam: xam.xex imports resolve to {}", real_xam->path());
+  }
+
   result = kernel_state_->FinishLoadingUserModule(module);
   if (XFAILED(result)) {
     XELOGE("Failed to initialize user module {}", path);
@@ -2505,6 +2535,24 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
     return X_STATUS_UNSUCCESSFUL;
   }
   main_thread_ = main_thread;
+
+  // The console starts XAM before any title runs: DllMain(module, ATTACH, 0).
+  if (real_xam && real_xam->entry_point()) {
+    auto init = kernel::object_ref<kernel::XThread>(new kernel::XThread(
+        kernel_state(), std::max<uint32_t>(real_xam->stack_size(), 0x40000), 0,
+        real_xam->entry_point(), real_xam->handle(), 0, true));
+    init->set_name("real xam init");
+    init->SetExtraStartArgs({1, 0});
+    if (XFAILED(init->Create())) {
+      XELOGE("real_xam: could not start the xam.xex entry point");
+      return X_STATUS_UNSUCCESSFUL;
+    }
+    uint64_t timeout = static_cast<uint64_t>(-30 * 10000000LL);
+    const X_STATUS wait = init->Wait(0, 0, 0, &timeout);
+    XELOGI("real_xam: xam.xex entry point finished with wait status {:08X}",
+           wait);
+  }
+
   on_launch(title_id_.value(), title_name_);
 
   // Plugins must be loaded after calling LaunchModule() and

@@ -423,6 +423,10 @@ bool KernelState::IsKernelModule(const std::string_view name) {
     // Executing module isn't a kernel module.
     return false;
   }
+  // With the real xam.xex loaded, its imports are linked to that module.
+  if (real_xam_module_ && xe::utf8::equal_case(name, "xam.xex")) {
+    return false;
+  }
   // NOTE: no global lock required as the kernel module list is static.
   for (auto kernel_module : kernel_modules_) {
     if (kernel_module->Matches(name)) {
@@ -479,6 +483,10 @@ object_ref<XModule> KernelState::GetModule(const std::string_view name,
   }
 
   auto global_lock = global_critical_region_.Acquire();
+
+  if (real_xam_module_ && xe::utf8::equal_case(name, "xam.xex")) {
+    return retain_object(real_xam_module_.get());
+  }
 
   if (!user_only) {
     for (auto kernel_module : kernel_modules_) {
@@ -657,6 +665,10 @@ void KernelState::SetExecutableModule(object_ref<UserModule> module) {
 void KernelState::LoadKernelModule(object_ref<KernelModule> kernel_module) {
   auto global_lock = global_critical_region_.Acquire();
   kernel_modules_.push_back(std::move(kernel_module));
+}
+
+void KernelState::SetRealXamModule(object_ref<UserModule> module) {
+  real_xam_module_ = std::move(module);
 }
 
 object_ref<UserModule> KernelState::LoadUserModule(

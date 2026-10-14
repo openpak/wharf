@@ -412,6 +412,11 @@ class XThread : public XObject, public cpu::Thread {
           bool main_thread = false, uint32_t guest_process = 0);
   ~XThread() override;
 
+  // Arguments after the context for a raw thread, for a DllMain-style entry.
+  void SetExtraStartArgs(std::vector<uint64_t> args) {
+    extra_start_args_ = std::move(args);
+  }
+
   static bool IsInThread(XThread* other);
   static bool IsInThread();
   static XThread* GetCurrentThread();
@@ -764,6 +769,8 @@ class XThread : public XObject, public cpu::Thread {
   // |thread| becomes the current guest thread on the calling host thread. Used
   // on each fiber switch by the guest scheduler. Pass nullptr to clear.
   static void SetCurrentThread(XThread* thread);
+
+  std::vector<uint64_t> extra_start_args_;
   void OnHostThreadExitCleanup();
 
  protected:

@@ -747,6 +747,7 @@ void XThread::Execute() {
     // Run user code.
     address = creation_params_.start_address;
     args.push_back(creation_params_.start_context);
+    args.insert(args.end(), extra_start_args_.begin(), extra_start_args_.end());
     want_exit_code = true;
   }
 

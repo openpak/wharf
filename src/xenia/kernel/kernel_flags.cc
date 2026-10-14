@@ -9,6 +9,10 @@
 
 #include "xenia/kernel/kernel_flags.h"
 
+DEFINE_bool(real_xam, false,
+            "Run a system title (the dashboard) against the real xam.xex from its own\n"
+            "folder instead of the built-in XAM. Experimental.",
+            "Kernel");
 DEFINE_bool(log_high_frequency_kernel_calls, false,
             "Log kernel calls with the kHighFrequency tag.", "Logging");
 DEFINE_bool(
