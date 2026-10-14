@@ -493,6 +493,30 @@ void InputSystem::ReconcileBindings() {
     }
   }
 
+  // Wharf: with no controller bound, the keyboard is controller 1, as the
+  // console needs a pad for its first-run screen. A real pad takes the slot
+  // first; a keyboard the user dismissed stays unbound.
+  {
+    bool any_bound = false;
+    for (auto& b : slot_bindings_) {
+      any_bound = any_bound || b.driver;
+    }
+    if (!any_bound) {
+      for (auto& l : live) {
+        if (l.info.stable_id != "keyboard" ||
+            dismissed_ids_.count(l.info.stable_id)) {
+          continue;
+        }
+        auto& b = slot_bindings_[0];
+        b.driver = l.driver;
+        b.driver_slot = l.info.driver_slot;
+        b.stable_id = l.info.stable_id;
+        b.display_name = l.info.display_name;
+        break;
+      }
+    }
+  }
+
   // Pass 3: a device with a native mode uses it unless its type is overridden.
   for (auto& b : slot_bindings_) {
     if (b.driver) {

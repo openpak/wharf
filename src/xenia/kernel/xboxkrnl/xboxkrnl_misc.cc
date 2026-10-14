@@ -436,6 +436,22 @@ DECLARE_XBOXKRNL_EXPORT1(XInputdSetRingOfLight, kNone, kStub);
 dword_result_t XVoicedSendVPort_entry() { return 0; }
 DECLARE_XBOXKRNL_EXPORT1(XVoicedSendVPort, kNone, kStub);
 
+// Security state: not detected, not activated (flags).
+dword_result_t XeKeysSecurityGetActivated_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(XeKeysSecurityGetActivated, kNone, kStub);
+
+dword_result_t XeKeysSecurityGetDetected_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(XeKeysSecurityGetDetected, kNone, kStub);
+
+dword_result_t XInputdFFDeviceControl_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(XInputdFFDeviceControl, kNone, kStub);
+
+dword_result_t XInputdGetDeviceStats_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(XInputdGetDeviceStats, kNone, kStub);
+
+dword_result_t XInputdGetFailedConnectionOrBind_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(XInputdGetFailedConnectionOrBind, kNone, kStub);
+
 }  // namespace xboxkrnl
 }  // namespace kernel
 }  // namespace xe

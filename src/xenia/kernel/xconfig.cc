@@ -61,6 +61,12 @@ DEFINE_uint32(
     " optional. Ex) 0x00010001\n",
     "Console");
 
+DEFINE_uint32(
+    retail_flags, 0,
+    "The console's retail flags (XCONFIG_USER_RETAIL_FLAGS). The dashboard reads the "
+    "DashboardInitialized bit (0x40) to decide whether first-run setup is done and "
+    "writes it when setup finishes; 0 runs the setup.",
+    "Console");
 DEFINE_bool(allow_nui_initialization, false,
             "Enable NUI initialization\n"
             " Only set true when testing kinect games. Certain games may\n"
@@ -134,7 +140,7 @@ uint16_t BuildSetting(X_CONFIG_CATEGORY category, uint16_t setting,
           return 4;
         case XCONFIG_USER_RETAIL_FLAGS:
           xe::store_and_swap<uint32_t>(
-              out, X_RETAIL_FLAGS::DashboardInitialized |
+              out, cvars::retail_flags |
                        (cvars::allow_nui_initialization
                             ? X_RETAIL_FLAGS::KinectInitialized
                             : 0));
@@ -334,6 +340,10 @@ void XConfig::WriteSetting(const X_CONFIG_CATEGORY category,
                                     "allow_nui_initialization",
                                     (xe::load_and_swap<uint32_t>(buffer) &
                                      X_RETAIL_FLAGS::KinectInitialized) != 0);
+          StoreConsoleSetting<uint32_t>(
+              cvars::retail_flags, "retail_flags",
+              xe::load_and_swap<uint32_t>(buffer) &
+                  ~static_cast<uint32_t>(X_RETAIL_FLAGS::KinectInitialized));
           return;
         case XCONFIG_USER_MUSIC_VOLUME: {
           const float volume = xe::load_and_swap<float>(buffer);

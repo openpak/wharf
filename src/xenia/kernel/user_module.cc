@@ -248,6 +248,12 @@ X_STATUS UserModule::LoadContinue() {
 
   uint8_t* xex_header_ptr = memory()->TranslateVirtual(guest_xex_header_);
   std::memcpy(xex_header_ptr, header, header->header_size);
+  // As on the console, the loaded header's security_offset field holds the
+  // guest address of the security info inside this copy (the real xam.xex reads
+  // the image flags through it).
+  xe::store_and_swap<uint32_t>(
+      xex_header_ptr + offsetof(xex2_header, security_offset),
+      guest_xex_header_ + static_cast<uint32_t>(header->security_offset));
 
   // Cache some commonly used headers...
   this->xex_module()->GetOptHeader(XEX_HEADER_ENTRY_POINT, &entry_point_);
