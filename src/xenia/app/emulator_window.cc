@@ -736,16 +736,10 @@ std::optional<LibraryKey> EmulatorWindow::RecordLaunchedDisc(
 }
 
 void EmulatorWindow::OnEmulatorInitialized() {
-  // Ahead of the no-profile prompt, which is modal and offers to import games
-  // right there. The import needs the library.
-  InitializeGameLibrary();
+    InitializeGameLibrary();
 
-  if (!emulator_->kernel_state()
-           ->xam_state()
-           ->profile_manager()
-           ->GetAccountCount()) {
-    ShowNoProfilePrompt();
-  }
+  // Wharf: no host "No Profiles Found" prompt. Profiles are created by the
+  // firmware's own flow, never by a host dialog.
 
   // When a title launches outside of RunTitle (e.g. --target on the command
   // line, or a relaunch from the kernel), ApplyContentVisibility wouldn't

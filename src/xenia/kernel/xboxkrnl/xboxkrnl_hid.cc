@@ -7,6 +7,8 @@
  ******************************************************************************
  */
 
+#include "xenia/emulator.h"
+#include "xenia/hid/input_system.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
 
@@ -28,6 +30,50 @@ dword_result_t HidReadKeys_entry(dword_t unk1, unknown_t unk2, unknown_t unk3) {
   return 0xC000009D;
 }
 DECLARE_XBOXKRNL_EXPORT1(HidReadKeys, kInput, kStub);
+
+// The real xam.xex reads controllers through these. The device id is the
+// user slot plus one, which is what the binding callback is given on connect.
+dword_result_t XInputdGetCapabilities_entry(dword_t device_id,
+                                            pointer_t<hid::X_INPUT_CAPABILITIES> caps,
+                                            lpdword_t flags_out) {
+  if (flags_out) {
+    *flags_out = 0;
+  }
+  if (!device_id || device_id > 4 || !caps) {
+    return 0xC000009D;  // device not connected
+  }
+  auto input_system = kernel_state()->emulator()->input_system();
+  auto lock = input_system->lock();
+  return input_system->GetCapabilities(
+             device_id - 1, hid::X_INPUT_FLAG::X_INPUT_FLAG_GAMEPAD, caps) ==
+                 X_ERROR_SUCCESS
+             ? 0
+             : 0xC000009D;
+}
+DECLARE_XBOXKRNL_EXPORT1(XInputdGetCapabilities, kInput, kImplemented);
+
+dword_result_t XInputdReadState_entry(dword_t device_id,
+                                      pointer_t<hid::X_INPUT_STATE> state,
+                                      lpvoid_t gamepad_out,
+                                      lpdword_t flags_out) {
+  if (flags_out) {
+    *flags_out = 0;
+  }
+  if (!device_id || device_id > 4 || !state) {
+    return 0xC000009D;
+  }
+  auto input_system = kernel_state()->emulator()->input_system();
+  auto lock = input_system->lock();
+  hid::X_INPUT_STATE read = {};
+  if (input_system->GetStateForUI(device_id - 1,
+                                  hid::X_INPUT_FLAG::X_INPUT_FLAG_GAMEPAD,
+                                  &read) != X_ERROR_SUCCESS) {
+    return 0xC000009D;
+  }
+  *state = read;
+  return 0;
+}
+DECLARE_XBOXKRNL_EXPORT1(XInputdReadState, kInput, kImplemented);
 
 }  // namespace xboxkrnl
 }  // namespace kernel

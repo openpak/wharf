@@ -330,7 +330,10 @@ DECLARE_XBOXKRNL_EXPORT1(IoDismountVolumeByName, kNone, kStub);
 dword_result_t HalGetPowerUpCause_entry() { return 0; }
 DECLARE_XBOXKRNL_EXPORT1(HalGetPowerUpCause, kNone, kStub);
 
-dword_result_t DrvSetUserBindingCallback_entry(dword_t callback) { return 0; }
+dword_result_t DrvSetUserBindingCallback_entry(dword_t callback) {
+  kernel_state()->set_drv_user_binding_callback(callback);
+  return 0;
+}
 DECLARE_XBOXKRNL_EXPORT1(DrvSetUserBindingCallback, kNone, kStub);
 
 dword_result_t DrvSetMicArrayStartCallback_entry(dword_t callback) {
@@ -425,6 +428,13 @@ DECLARE_XBOXKRNL_EXPORT1(VdReadEEDIDBlock, kNone, kStub);
 // STATUS_NOT_FOUND: the key vault has no such key.
 dword_result_t XeKeysExGetKey_entry() { return 0xC0000225; }
 DECLARE_XBOXKRNL_EXPORT1(XeKeysExGetKey, kNone, kStub);
+
+// Controller bind side effects (real_xam): the ring of light and voice port.
+dword_result_t XInputdSetRingOfLight_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(XInputdSetRingOfLight, kNone, kStub);
+
+dword_result_t XVoicedSendVPort_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(XVoicedSendVPort, kNone, kStub);
 
 }  // namespace xboxkrnl
 }  // namespace kernel

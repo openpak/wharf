@@ -2552,6 +2552,20 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
     uint64_t timeout = static_cast<uint64_t>(-30 * 10000000LL);
     const X_STATUS wait = init->Wait(0, 0, 0, &timeout);
     kernel_state()->EndRealXamInit();
+    // The kernel tells XAM about a connected controller: user-binding callback
+    // (device id, device class, port type, 0 = connect, user hint).
+    if (const uint32_t binding = kernel_state()->drv_user_binding_callback()) {
+      auto connect = kernel::object_ref<kernel::XThread>(new kernel::XThread(
+          kernel_state(), 0x40000, 0, binding, 1, 0, true, false,
+          kernel_state()->GetSystemProcess()));
+      connect->set_name("real xam connect");
+      connect->SetExtraStartArgs({0x40000000, 1, 0, 0});
+      if (XSUCCEEDED(connect->Create())) {
+        uint64_t connect_timeout = static_cast<uint64_t>(-10 * 10000000LL);
+        connect->Wait(0, 0, 0, &connect_timeout);
+        XELOGI("real_xam: controller connect callback done");
+      }
+    }
     XELOGI("real_xam: xam.xex entry point finished with wait status {:08X}",
            wait);
     const auto* state_ptr =
