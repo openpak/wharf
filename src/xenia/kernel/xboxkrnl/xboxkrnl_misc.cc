@@ -351,7 +351,11 @@ DECLARE_XBOXKRNL_EXPORT1(DrvSetContentStorageCallback, kNone, kStub);
 dword_result_t DrvSetAudioLatencyCallback_entry(dword_t callback) { return 0; }
 DECLARE_XBOXKRNL_EXPORT1(DrvSetAudioLatencyCallback, kNone, kStub);
 
-dword_result_t DrvGetContentStorageNotification_entry() { return 0; }
+// Negative means no notification is pending; XAM loops while the status is
+// non-negative, reading the buffer (0x8000001A is STATUS_NO_MORE_ENTRIES).
+dword_result_t DrvGetContentStorageNotification_entry(dword_t buffer) {
+  return 0x8000001A;
+}
 DECLARE_XBOXKRNL_EXPORT1(DrvGetContentStorageNotification, kNone, kStub);
 
 // Second round (real_xam): crash-dump, NIC and video exports XAM touches while
@@ -385,6 +389,42 @@ DECLARE_XBOXKRNL_EXPORT1(HalGetNotedArgonErrors, kNone, kStub);
 
 dword_result_t VdSetStudioRGBMode_entry() { return 0; }
 DECLARE_XBOXKRNL_EXPORT1(VdSetStudioRGBMode, kNone, kStub);
+
+// Third round (real_xam): audio ducker, Kinect, NIC statistics, display EDID
+// and key-vault reads the dashboard and XAM poll.
+dword_result_t UsbdGetNatalHardwareVersion_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(UsbdGetNatalHardwareVersion, kNone, kStub);
+
+dword_result_t XAudioGetDuckerLevel_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(XAudioGetDuckerLevel, kNone, kStub);
+
+dword_result_t XAudioGetDuckerHoldTime_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(XAudioGetDuckerHoldTime, kNone, kStub);
+
+dword_result_t XAudioGetDuckerThreshold_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(XAudioGetDuckerThreshold, kNone, kStub);
+
+dword_result_t XAudioGetDuckerAttackTime_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(XAudioGetDuckerAttackTime, kNone, kStub);
+
+dword_result_t XAudioSetDuckerLevel_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(XAudioSetDuckerLevel, kNone, kStub);
+
+dword_result_t NicGetStats_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(NicGetStats, kNone, kStub);
+
+// A zeroed block: no EDID information.
+dword_result_t VdReadEEDIDBlock_entry(dword_t block, lpvoid_t buffer) {
+  if (buffer) {
+    std::memset(buffer, 0, 0x80);
+  }
+  return 0;
+}
+DECLARE_XBOXKRNL_EXPORT1(VdReadEEDIDBlock, kNone, kStub);
+
+// STATUS_NOT_FOUND: the key vault has no such key.
+dword_result_t XeKeysExGetKey_entry() { return 0xC0000225; }
+DECLARE_XBOXKRNL_EXPORT1(XeKeysExGetKey, kNone, kStub);
 
 }  // namespace xboxkrnl
 }  // namespace kernel

@@ -2296,18 +2296,6 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
       return X_STATUS_NOT_FOUND;
     }
     kernel_state_->SetRealXamModule(real_xam);
-    // Experiment: the 6,536-byte state block is requested from heap class 1,
-    // whose heap 0 is only created inside that state's Initialize. Send it to
-    // heap 1 (subfe r3,r10,r9 at 816E5EEC becomes li r3,1).
-    {
-      auto* insn = memory()->TranslateVirtual<xe::be<uint32_t>*>(0x816E5EEC);
-      XELOGI("real_xam: instruction at 816E5EEC is {:08X}",
-             static_cast<uint32_t>(*insn));
-      if (static_cast<uint32_t>(*insn) == 0x7C6A4910) {
-        *insn = 0x38600001;
-        XELOGI("real_xam: patched 816E5EEC to li r3,1");
-      }
-    }
     const X_STATUS xam_result =
         kernel_state_->FinishLoadingUserModule(real_xam, false);
     if (XFAILED(xam_result)) {
@@ -2552,7 +2540,8 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
   if (real_xam && real_xam->entry_point()) {
     auto init = kernel::object_ref<kernel::XThread>(new kernel::XThread(
         kernel_state(), std::max<uint32_t>(real_xam->stack_size(), 0x40000), 0,
-        real_xam->entry_point(), real_xam->handle(), 0, true));
+        real_xam->entry_point(), real_xam->handle(), 0, true, false,
+        kernel_state()->GetSystemProcess()));
     init->set_name("real xam init");
     init->SetExtraStartArgs({1, 0});
     kernel_state()->BeginRealXamInit(init.get());
