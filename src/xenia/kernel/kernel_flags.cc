@@ -13,6 +13,12 @@ DEFINE_bool(real_xam, false,
             "Run a system title (the dashboard) against the real xam.xex from its own\n"
             "folder instead of the built-in XAM. Experimental.",
             "Kernel");
+DEFINE_bool(real_xam_silent_ui_sounds, true,
+            "With real_xam: make the dashboard's sound-start routines return success\n"
+            "without playing. Stand-in until the console's base resource files (which\n"
+            "hold the button sounds) are available; a missing sound otherwise fails\n"
+            "the button press that triggered it.",
+            "Kernel");
 DEFINE_bool(log_high_frequency_kernel_calls, false,
             "Log kernel calls with the kHighFrequency tag.", "Logging");
 DEFINE_bool(

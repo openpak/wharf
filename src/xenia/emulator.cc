@@ -2296,6 +2296,21 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
       return X_STATUS_NOT_FOUND;
     }
     kernel_state_->SetRealXamModule(real_xam);
+    // Dev stand-in (see real_xam_silent_ui_sounds): the dashboard's two
+    // sound-start routines (XuiSoundXAudio at 921DC338, XuiSoundXACT at
+    // 921DD850) become `li r3,0; blr`. Only patched when the first
+    // instruction is the expected `mflr r12`.
+    if (cvars::real_xam_silent_ui_sounds) {
+      for (const uint32_t address : {0x921DC338u, 0x921DD850u}) {
+        auto* insn = memory()->TranslateVirtual<xe::be<uint32_t>*>(address);
+        if (static_cast<uint32_t>(insn[0]) == 0x7D8802A6) {
+          insn[0] = 0x38600000;  // li r3, 0
+          insn[1] = 0x4E800020;  // blr
+          XELOGW("real_xam: UI sound routine at {:08X} patched to a no-op",
+                 address);
+        }
+      }
+    }
     const X_STATUS xam_result =
         kernel_state_->FinishLoadingUserModule(real_xam, false);
     if (XFAILED(xam_result)) {
@@ -2553,21 +2568,26 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
     const X_STATUS wait = init->Wait(0, 0, 0, &timeout);
     kernel_state()->EndRealXamInit();
     // The kernel tells XAM about a connected controller: user-binding callback
-    // (device id, device class, port type, 0 = connect, user hint).
-    if (const uint32_t binding = kernel_state()->drv_user_binding_callback()) {
-      // Device id 0x4000000N: class 4 (gamepad) and user slot N-1; port type 0.
-      constexpr unsigned long bind_args[5] = {1, 0x40000001, 0, 0, 0};
+    // (device id, device class, port type, connect/disconnect flag, user hint).
+    // Device id 0x4000000N: class 4 (gamepad) and user slot N-1.
+    const uint32_t binding = kernel_state()->drv_user_binding_callback();
+    // XamInputGetState looks the device up in slot 0, or slot 3 when the caller
+    // asks for keystroke mode (flag 8), which is what the dashboard's menus use.
+    // So the kernel connects the pad for both port types.
+    for (const uint64_t port_type : {0, 3}) {
+      if (!binding) {
+        break;
+      }
       auto connect = kernel::object_ref<kernel::XThread>(new kernel::XThread(
-          kernel_state(), 0x40000, 0, binding,
-          static_cast<uint32_t>(bind_args[0]), 0, true, false,
+          kernel_state(), 0x40000, 0, binding, 1, 0, true, false,
           kernel_state()->GetSystemProcess()));
       connect->set_name("real xam connect");
-      connect->SetExtraStartArgs(
-          {bind_args[1], bind_args[2], bind_args[3], bind_args[4]});
+      connect->SetExtraStartArgs({0x40000001, port_type, 0, 0});
       if (XSUCCEEDED(connect->Create())) {
         uint64_t connect_timeout = static_cast<uint64_t>(-10 * 10000000LL);
         connect->Wait(0, 0, 0, &connect_timeout);
-        XELOGI("real_xam: controller connect callback done");
+        XELOGI("real_xam: controller connect callback done (port type {})",
+               port_type);
       }
     }
     XELOGI("real_xam: xam.xex entry point finished with wait status {:08X}",

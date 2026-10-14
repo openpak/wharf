@@ -12,6 +12,7 @@
 #include "xenia/base/cvar.h"
 
 DECLARE_bool(real_xam);
+DECLARE_bool(real_xam_silent_ui_sounds);
 DECLARE_bool(log_high_frequency_kernel_calls);
 DECLARE_bool(guest_scheduler);
 DECLARE_uint32(guest_scheduler_quantum_us);
