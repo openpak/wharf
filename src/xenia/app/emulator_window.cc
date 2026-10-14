@@ -1534,6 +1534,10 @@ void EmulatorWindow::OnKeyDown(ui::KeyEvent& e) {
       TogglePerformanceTuningDialog();
     } break;
     case ui::VirtualKey::kF8: {
+      // Plain F8 is the guide button, as HOME is in Harbor.
+      if (!e.is_ctrl_pressed()) {
+        return;
+      }
       ToggleDebugSettingsDialog();
     } break;
     case ui::VirtualKey::kF11: {
