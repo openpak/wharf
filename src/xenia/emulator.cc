@@ -2555,11 +2555,15 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
     // The kernel tells XAM about a connected controller: user-binding callback
     // (device id, device class, port type, 0 = connect, user hint).
     if (const uint32_t binding = kernel_state()->drv_user_binding_callback()) {
+      // Device id 0x4000000N: class 4 (gamepad) and user slot N-1; port type 0.
+      constexpr unsigned long bind_args[5] = {1, 0x40000001, 0, 0, 0};
       auto connect = kernel::object_ref<kernel::XThread>(new kernel::XThread(
-          kernel_state(), 0x40000, 0, binding, 1, 0, true, false,
+          kernel_state(), 0x40000, 0, binding,
+          static_cast<uint32_t>(bind_args[0]), 0, true, false,
           kernel_state()->GetSystemProcess()));
       connect->set_name("real xam connect");
-      connect->SetExtraStartArgs({0x40000000, 1, 0, 0});
+      connect->SetExtraStartArgs(
+          {bind_args[1], bind_args[2], bind_args[3], bind_args[4]});
       if (XSUCCEEDED(connect->Create())) {
         uint64_t connect_timeout = static_cast<uint64_t>(-10 * 10000000LL);
         connect->Wait(0, 0, 0, &connect_timeout);

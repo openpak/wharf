@@ -31,21 +31,27 @@ dword_result_t HidReadKeys_entry(dword_t unk1, unknown_t unk2, unknown_t unk3) {
 }
 DECLARE_XBOXKRNL_EXPORT1(HidReadKeys, kInput, kStub);
 
-// The real xam.xex reads controllers through these. The device id is the
-// user slot plus one, which is what the binding callback is given on connect.
+// The real xam.xex reads controllers through these. A device id is 0x4000000N:
+// class 4 (gamepad) in the top nibble, user slot N-1, as given to the binding
+// callback on connect.
+static uint32_t GamepadSlot(uint32_t device_id) {
+  const uint32_t n = device_id & 0xFFFF;
+  return (device_id >> 28) == 4 && n >= 1 && n <= 4 ? n - 1 : 0xFFFFFFFF;
+}
+
 dword_result_t XInputdGetCapabilities_entry(dword_t device_id,
                                             pointer_t<hid::X_INPUT_CAPABILITIES> caps,
                                             lpdword_t flags_out) {
   if (flags_out) {
     *flags_out = 0;
   }
-  if (!device_id || device_id > 4 || !caps) {
+  if (GamepadSlot(device_id) == 0xFFFFFFFF || !caps) {
     return 0xC000009D;  // device not connected
   }
   auto input_system = kernel_state()->emulator()->input_system();
   auto lock = input_system->lock();
   return input_system->GetCapabilities(
-             device_id - 1, hid::X_INPUT_FLAG::X_INPUT_FLAG_GAMEPAD, caps) ==
+             GamepadSlot(device_id), hid::X_INPUT_FLAG::X_INPUT_FLAG_GAMEPAD, caps) ==
                  X_ERROR_SUCCESS
              ? 0
              : 0xC000009D;
@@ -59,13 +65,13 @@ dword_result_t XInputdReadState_entry(dword_t device_id,
   if (flags_out) {
     *flags_out = 0;
   }
-  if (!device_id || device_id > 4 || !state) {
+  if (GamepadSlot(device_id) == 0xFFFFFFFF || !state) {
     return 0xC000009D;
   }
   auto input_system = kernel_state()->emulator()->input_system();
   auto lock = input_system->lock();
   hid::X_INPUT_STATE read = {};
-  if (input_system->GetStateForUI(device_id - 1,
+  if (input_system->GetStateForUI(GamepadSlot(device_id),
                                   hid::X_INPUT_FLAG::X_INPUT_FLAG_GAMEPAD,
                                   &read) != X_ERROR_SUCCESS) {
     return 0xC000009D;
