@@ -1183,6 +1183,9 @@ bool EmulatorWindow::Initialize() {
           static_cast<int>(cvars::volume > 100 ? 100 : cvars::volume), 0, 100,
           wxDefaultPosition, wxSize(120, -1));
       wx_toolbar_state_->audio_slider->SetToolTip(_("Volume"));
+      // Wharf: the arrow keys belong to the emulated controller; a focused
+      // slider would take Up and Right for itself.
+      wx_toolbar_state_->audio_slider->SetCanFocus(false);
 #if XE_PLATFORM_WIN32
       // Strip Win10+ theming — the blue accent fill clashes with the flat
       // toolbar palette; classic gray track fits better.

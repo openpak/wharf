@@ -265,7 +265,8 @@ class EmulatorWindow {
   int audio_icon_key_ = -1;
   uint32_t pre_mute_volume_ = 100;
   ui::MenuItem* view_show_toolbar_item_ = nullptr;
-  bool show_toolbar_ = true;
+  // Wharf: no host toolbar by default; its widgets take the arrow keys.
+  bool show_toolbar_ = false;
   void RefreshProfileMenu();
   void PopulateProfileMenu(ui::MenuItem* parent);
   void RefreshControllersMenu();
