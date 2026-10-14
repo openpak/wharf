@@ -375,18 +375,6 @@ DECLARE_XBOXKRNL_EXPORT1(DumpRegisterDedicatedDataBlock, kNone, kStub);
 dword_result_t HalRegisterHdDvdRomNotification_entry() { return 0; }
 DECLARE_XBOXKRNL_EXPORT1(HalRegisterHdDvdRomNotification, kNone, kStub);
 
-dword_result_t NicAttach_entry() { return 0; }
-DECLARE_XBOXKRNL_EXPORT1(NicAttach, kNone, kStub);
-
-dword_result_t NicGetLinkState_entry() { return 0; }
-DECLARE_XBOXKRNL_EXPORT1(NicGetLinkState, kNone, kStub);
-
-dword_result_t NicGetOpt_entry() { return 0; }
-DECLARE_XBOXKRNL_EXPORT1(NicGetOpt, kNone, kStub);
-
-dword_result_t NicSetUnicastAddress_entry() { return 0; }
-DECLARE_XBOXKRNL_EXPORT1(NicSetUnicastAddress, kNone, kStub);
-
 dword_result_t HalGetNotedArgonErrors_entry() { return 0; }
 DECLARE_XBOXKRNL_EXPORT1(HalGetNotedArgonErrors, kNone, kStub);
 
@@ -412,9 +400,6 @@ DECLARE_XBOXKRNL_EXPORT1(XAudioGetDuckerAttackTime, kNone, kStub);
 
 dword_result_t XAudioSetDuckerLevel_entry() { return 0; }
 DECLARE_XBOXKRNL_EXPORT1(XAudioSetDuckerLevel, kNone, kStub);
-
-dword_result_t NicGetStats_entry() { return 0; }
-DECLARE_XBOXKRNL_EXPORT1(NicGetStats, kNone, kStub);
 
 // A zeroed block: no EDID information.
 dword_result_t VdReadEEDIDBlock_entry(dword_t block, lpvoid_t buffer) {
@@ -451,6 +436,14 @@ DECLARE_XBOXKRNL_EXPORT1(XInputdGetDeviceStats, kNone, kStub);
 
 dword_result_t XInputdGetFailedConnectionOrBind_entry() { return 0; }
 DECLARE_XBOXKRNL_EXPORT1(XInputdGetFailedConnectionOrBind, kNone, kStub);
+
+// Boot animation and speaker configuration (real_xam): the kernel's boot
+// animation has nothing to wait for here.
+dword_result_t AniBlockOnAnimation_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(AniBlockOnAnimation, kNone, kStub);
+
+dword_result_t XAudioSetSpeakerConfig_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(XAudioSetSpeakerConfig, kNone, kStub);
 
 }  // namespace xboxkrnl
 }  // namespace kernel

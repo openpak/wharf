@@ -423,6 +423,12 @@ dword_result_t ObReferenceObjectByName_entry(pointer_t<X_ANSI_STRING> name,
                                            out_object_ptr);
   }
 
+  // XAM's device monitors poll absent devices (HdDvdRom...) until the kernel
+  // answers STATUS_NO_SUCH_DEVICE; anything else makes them spin.
+  if (object_type_ptr && !strncasecmp(name_str, "\\Device\\", 8)) {
+    return 0xC000000E;
+  }
+
   return result;
 }
 DECLARE_XBOXKRNL_EXPORT1(ObReferenceObjectByName, kNone, kImplemented);
@@ -528,6 +534,36 @@ dword_result_t ObDeleteSymbolicLink_entry(pointer_t<X_ANSI_STRING> path_ptr) {
   return X_STATUS_SUCCESS;
 }
 DECLARE_XBOXKRNL_EXPORT1(ObDeleteSymbolicLink, kNone, kImplemented);
+
+// Resolves a symbolic link name ("game:", "\\SystemRoot", ...) to the path it
+// points at, written into the caller's ANSI string buffer.
+dword_result_t ObTranslateSymbolicLink_entry(dword_t attributes_ptr,
+                                             pointer_t<X_ANSI_STRING> out) {
+  const auto* attributes =
+      kernel_memory()->TranslateVirtual<const X_OBJECT_ATTRIBUTES*>(
+          attributes_ptr);
+  const auto* name_string = util::TranslateAnsiStringPointer(
+      kernel_memory(), attributes->name_ptr);
+  if (!name_string) {
+    return 0xC000000D;  // STATUS_INVALID_PARAMETER
+  }
+  auto name = xeObSymbolicLinkName(
+      util::TranslateAnsiPath(kernel_memory(), name_string));
+  std::string target;
+  if (!kernel_state()->file_system()->FindSymbolicLink(name, target)) {
+    return 0xC0000034;  // STATUS_OBJECT_NAME_NOT_FOUND
+  }
+  const uint32_t capacity = out->maximum_length;
+  const uint32_t length = std::min<uint32_t>(
+      static_cast<uint32_t>(target.size()), capacity ? capacity : 0);
+  if (out->pointer && length) {
+    std::memcpy(kernel_memory()->TranslateVirtual<char*>(out->pointer),
+                target.data(), length);
+  }
+  out->length = static_cast<uint16_t>(length);
+  return length == target.size() ? 0 : 0x80000005;  // STATUS_BUFFER_OVERFLOW
+}
+DECLARE_XBOXKRNL_EXPORT1(ObTranslateSymbolicLink, kNone, kImplemented);
 
 dword_result_t NtDuplicateObject_entry(dword_t handle, lpdword_t new_handle_ptr,
                                        dword_t options) {

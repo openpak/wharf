@@ -2590,6 +2590,29 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
                port_type);
       }
     }
+    // XAM creates the title heap ("heap 0", sized from the title's XEX header)
+    // in 816E6870, which its title-launch engine reaches through the state's
+    // Initialize; that engine (service thread 816A0C90, XexStartExecutable) is
+    // not reproduced yet, so run just this step before the title starts.
+    {
+      constexpr uint32_t kXamTitleHeapInit = 0x816E6870;
+      const auto* insn = memory()->TranslateVirtual<const xe::be<uint32_t>*>(
+          kXamTitleHeapInit);
+      if (static_cast<uint32_t>(*insn) == 0x7D8802A6) {  // mflr r12
+        auto heap_init = kernel::object_ref<kernel::XThread>(
+            new kernel::XThread(kernel_state(), 0x40000, 0, kXamTitleHeapInit,
+                                0, 0, true));
+        heap_init->set_name("real xam title heap");
+        if (XSUCCEEDED(heap_init->Create())) {
+          uint64_t heap_timeout = static_cast<uint64_t>(-10 * 10000000LL);
+          const X_STATUS heap_wait = heap_init->Wait(0, 0, 0, &heap_timeout);
+          XELOGI("real_xam: title heap init finished with wait status {:08X}",
+                 heap_wait);
+        }
+      } else {
+        XELOGW("real_xam: no title heap init at {:08X}", kXamTitleHeapInit);
+      }
+    }
     XELOGI("real_xam: xam.xex entry point finished with wait status {:08X}",
            wait);
     const auto* state_ptr =
