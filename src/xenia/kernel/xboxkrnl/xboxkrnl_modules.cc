@@ -19,6 +19,14 @@ namespace xe {
 namespace kernel {
 namespace xboxkrnl {
 
+// XAM 17559 supplies its current FILETIME after decoding a KDC reply
+// (81949FC8 -> import 81A73AA4) and propagates this call's status.
+dword_result_t XexSetLastKdcTime_entry(qword_t time) {
+  kernel_state()->SetLastKdcTime(time);
+  return X_STATUS_SUCCESS;
+}
+DECLARE_XBOXKRNL_EXPORT1(XexSetLastKdcTime, kModules, kSketchy);
+
 dword_result_t XexCheckExecutablePrivilege_entry(dword_t privilege) {
   // BOOL
   // DWORD Privilege

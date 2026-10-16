@@ -184,6 +184,8 @@ class KernelState {
 
   uint32_t title_id() const;
   bool is_title_open() const;
+  void SetLastKdcTime(uint64_t time) { last_kdc_time_.store(time); }
+  uint64_t last_kdc_time() const { return last_kdc_time_.load(); }
   const std::unique_ptr<xam::SpaInfo> title_xdbf() const;
   const std::unique_ptr<xam::SpaInfo> module_xdbf(
       object_ref<UserModule> exec_module) const;
@@ -441,6 +443,7 @@ class KernelState {
   std::unique_ptr<XConfig> xconfig_;
 
   KernelVersion kernel_version_;
+  std::atomic<uint64_t> last_kdc_time_{0};
 
   xe::global_critical_region global_critical_region_;
 
