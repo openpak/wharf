@@ -35,6 +35,7 @@
 #include "xenia/kernel/xboxkrnl/xecrypt_des.h"
 #include "xenia/kernel/xboxkrnl/xecrypt_md5.h"
 #include "xenia/kernel/xboxkrnl/xecrypt_rsa.h"
+#include "xenia/kernel/xboxkrnl/xecrypt_dh.h"
 #include "xenia/kernel/xboxkrnl/xecrypt_sha.h"
 
 DEFINE_string(console_ca_key, "",
@@ -557,6 +558,36 @@ dword_result_t XeCryptBnQwBeSigVerify_entry(pointer_t<XECRYPT_SIG> sig,
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptBnQwBeSigVerify, kNone, kStub);
 
+// The null group is the console's 768-bit Live group. Custom group
+// descriptors are separate from the fixed group used by XAM's network stack.
+dword_result_t XeCryptBnDwLeDhModExp_entry(lpvoid_t base, lpvoid_t exponent,
+                                           lpvoid_t output, lpvoid_t group) {
+  if (group) {
+    XELOGW("XeCryptBnDwLeDhModExp: custom group is not implemented");
+    return 0;
+  }
+  return LiveDhModExp(base ? base.as<uint8_t*>() : nullptr,
+                      exponent ? exponent.as<uint8_t*>() : nullptr,
+                      output ? output.as<uint8_t*>() : nullptr);
+}
+DECLARE_XBOXKRNL_EXPORT1(XeCryptBnDwLeDhModExp, kNone, kSketchy);
+
+dword_result_t XeCryptBnDwLeDhInvalBase_entry(lpvoid_t base, lpvoid_t group) {
+  if (group) return 1;
+  return LiveDhInvalidBase(base.as<uint8_t*>()) ? 1 : 0;
+}
+DECLARE_XBOXKRNL_EXPORT1(XeCryptBnDwLeDhInvalBase, kNone, kSketchy);
+
+dword_result_t XeCryptBnDwLeDhEqualBase_entry(lpvoid_t base, lpvoid_t group) {
+  if (group) return 0;
+  if (!base) return 1;
+  const auto* bytes = base.as<uint8_t*>();
+  if (bytes[0] != 2) return 0;
+  for (size_t i = 1; i < 96; ++i) if (bytes[i]) return 0;
+  return 1;
+}
+DECLARE_XBOXKRNL_EXPORT1(XeCryptBnDwLeDhEqualBase, kNone, kSketchy);
+
 dword_result_t XeCryptBnDwLePkcs1Verify_entry(lpvoid_t hash, lpvoid_t sig,
                                               dword_t size) {
   // BOOL return value
@@ -657,6 +688,24 @@ void XeCryptHmacSha_entry(lpvoid_t key, dword_t key_size_in, lpvoid_t inp_1,
                  out_size);
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptHmacSha, kNone, kImplemented);
+
+dword_result_t XeCryptHmacShaVerify_entry(
+    lpvoid_t key, dword_t key_size, lpvoid_t inp_1, dword_t inp_1_size,
+    lpvoid_t inp_2, dword_t inp_2_size, lpvoid_t inp_3, dword_t inp_3_size,
+    lpvoid_t expected, dword_t expected_size) {
+  if (!expected || !expected_size || expected_size > 20) return 0;
+  uint8_t digest[20];
+  XeCryptHmacSha(key.as<uint8_t*>(), key_size, inp_1.as<uint8_t*>(),
+                inp_1_size, inp_2.as<uint8_t*>(), inp_2_size,
+                inp_3.as<uint8_t*>(), inp_3_size, digest, sizeof(digest));
+  uint8_t difference = 0;
+  for (uint32_t i = 0; i < expected_size; ++i) {
+    difference |= digest[i] ^ expected.as<uint8_t*>()[i];
+  }
+  return difference == 0;
+}
+DECLARE_XBOXKRNL_EXPORT1(XeCryptHmacShaVerify, kNone, kImplemented);
+
 
 // HMAC-MD5 over the three optional inputs concatenated, same argument layout
 // as XeCryptHmacSha. XAM's XNet uses it right after a DNS answer.
