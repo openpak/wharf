@@ -344,6 +344,17 @@ dword_result_t XexLoadImageHeaders_entry(pointer_t<X_ANSI_STRING> path,
     result_status = X_STATUS_BUFFER_TOO_SMALL;
   }
 
+  // The kernel hands back relocated headers: the security-info field holds a
+  // guest pointer, not the file offset. XAM's manifest check reads it as a
+  // pointer (lwz 0x10(hdr); addi 8) and hashes the 0x100-byte signature there;
+  // with the raw offset it read guest address 0x98 and the init thread died.
+  if (result_status == X_STATUS_SUCCESS) {
+    const uint32_t security_offset = header->security_offset;
+    if (security_offset && security_offset < header_size) {
+      header->security_offset = header.guest_address() + security_offset;
+    }
+  }
+
   vfs_file->Destroy();
   return result_status;
 }
