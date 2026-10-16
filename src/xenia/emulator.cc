@@ -2244,11 +2244,25 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
     file_system_->RegisterDevice(std::move(content_device));
   }
 
+  // The real XAM reads \Device\Harddisk0\SystemExtPartition\system.manifest
+  // (the signed manifest of the installed system update; the public 17559
+  // update ships it as $SystemUpdate\system.manifest) to learn the console's
+  // extended-system revision. The Live logon compares that revision with the
+  // server's hive and fails without it. Mount a read-only host directory
+  // (storage root "systemext") holding the manifest; the longest mount wins
+  // over the \Device\Harddisk0 NullDevice below.
+  auto systemext_device = std::make_unique<vfs::HostPathDevice>(
+      "\\Device\\Harddisk0\\SystemExtPartition", storage_root_ / "systemext",
+      true);
+  if (systemext_device->Initialize()) {
+    file_system_->RegisterDevice(std::move(systemext_device));
+  }
+
   // Setup NullDevices for raw HDD partition accesses
   // Cache/STFC code baked into games tries reading/writing to these
   // By using a NullDevice that just returns success to all IO requests it
   // should allow games to believe cache/raw disk was accessed successfully
-  auto null_paths = {std::string("\\Partition0"), std::string("\\Cache0"),
+  auto null_paths = {std::string("\\Partition0"), std::string("\\Partition1"), std::string("\\Cache0"),
                      std::string("\\Cache1")};
   auto null_device =
       std::make_unique<vfs::NullDevice>("\\Device\\Harddisk0", null_paths);

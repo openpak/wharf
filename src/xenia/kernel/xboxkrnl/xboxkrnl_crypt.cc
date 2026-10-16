@@ -1254,6 +1254,26 @@ dword_result_t XeKeysGetConsoleID_entry(pointer_t<XE_CONSOLE_ID> raw_bytes,
 }
 DECLARE_XBOXKRNL_EXPORT1(XeKeysGetConsoleID, kNone, kImplemented);
 
+// XeKeysVerifyRSASignature(key_index, hash, signature): the kernel verifies a
+// signature made with one of its built-in public keys (index 0 signs the
+// system.manifest XAM reads at start-up; it rejects the manifest and the Live
+// logon's revision check fails when this returns 0). Wharf DEV STAND-IN: the
+// manifest's SHA-1 is still checked by XAM; the RSA step is accepted for key 0
+// because the matching public key is not in this tree.
+dword_result_t XeKeysVerifyRSASignature_entry(dword_t key_index, lpvoid_t hash,
+                                              lpvoid_t signature) {
+  if (!hash || !signature) {
+    return 0;
+  }
+  if (key_index != 0) {
+    XELOGW("XeKeysVerifyRSASignature: key {} is not implemented",
+           uint32_t(key_index));
+    return 0;
+  }
+  return 1;
+}
+DECLARE_XBOXKRNL_EXPORT1(XeKeysVerifyRSASignature, kNone, kSketchy);
+
 // XAM wrapper 81737F18 translates (hash, 20, out) to (hash, out).
 // The kernel receives (hash, XE_CONSOLE_SIGNATURE* out) from the MACS AS-REQ
 // builder (81946C70 -> 81737F18): out receives the console certificate (0x1A8)
