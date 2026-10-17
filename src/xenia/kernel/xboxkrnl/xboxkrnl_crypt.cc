@@ -696,6 +696,90 @@ void XeCryptAesCbc_entry(pointer_t<XECRYPT_AES_STATE> state_ptr,
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptAesCbc, kNone, kImplemented);
 
+// The 17559 kernel's variable-key-size AES (128/192/256): XAM's TLS provider
+// encrypts and decrypts its records with these. The schedule is opaque to the
+// guest (XAM only passes it back), so Wharf keeps the raw key in it and
+// expands it per call: u32 key size in bytes, then the key.
+struct X_AES_SCHEDULE {
+  xe::be<uint32_t> key_size;
+  uint8_t key[32];
+};
+
+dword_result_t XeCryptAesCreateKeySchedule_entry(lpvoid_t key,
+                                                 dword_t key_size,
+                                                 pointer_t<X_AES_SCHEDULE> sched) {
+  if (!sched || !key ||
+      (key_size != 16 && key_size != 24 && key_size != 32)) {
+    return X_STATUS_INVALID_PARAMETER;
+  }
+  sched->key_size = static_cast<uint32_t>(key_size);
+  std::memset(sched->key, 0, sizeof(sched->key));
+  std::memcpy(sched->key, key.as<uint8_t*>(), key_size);
+  return X_STATUS_SUCCESS;
+}
+DECLARE_XBOXKRNL_EXPORT1(XeCryptAesCreateKeySchedule, kNone, kImplemented);
+
+static bool AesScheduleContext(const X_AES_SCHEDULE* sched, bool encrypt,
+                               mbedtls_aes_context* ctx) {
+  uint32_t n = sched->key_size;
+  if (n != 16 && n != 24 && n != 32) {
+    XELOGE("XeCryptAes: schedule with key size {}", n);
+    return false;
+  }
+  mbedtls_aes_init(ctx);
+  return (encrypt ? mbedtls_aes_setkey_enc(ctx, sched->key, n * 8)
+                  : mbedtls_aes_setkey_dec(ctx, sched->key, n * 8)) == 0;
+}
+
+static void AesScheduleOne(pointer_t<X_AES_SCHEDULE> sched, lpvoid_t inp,
+                           lpvoid_t out, bool encrypt) {
+  mbedtls_aes_context ctx;
+  if (!AesScheduleContext(sched, encrypt, &ctx)) return;
+  mbedtls_aes_crypt_ecb(&ctx, encrypt ? MBEDTLS_AES_ENCRYPT : MBEDTLS_AES_DECRYPT,
+                        inp.as<uint8_t*>(), out.as<uint8_t*>());
+  mbedtls_aes_free(&ctx);
+}
+
+void XeCryptAesEncryptOne_entry(pointer_t<X_AES_SCHEDULE> sched, lpvoid_t inp,
+                                lpvoid_t out) {
+  AesScheduleOne(sched, inp, out, true);
+}
+DECLARE_XBOXKRNL_EXPORT1(XeCryptAesEncryptOne, kNone, kImplemented);
+
+void XeCryptAesDecryptOne_entry(pointer_t<X_AES_SCHEDULE> sched, lpvoid_t inp,
+                                lpvoid_t out) {
+  AesScheduleOne(sched, inp, out, false);
+}
+DECLARE_XBOXKRNL_EXPORT1(XeCryptAesDecryptOne, kNone, kImplemented);
+
+// CBC over whole blocks; feed is the IV in and the last ciphertext block out,
+// as with XeCryptAesCbc.
+static void AesScheduleCbc(pointer_t<X_AES_SCHEDULE> sched, lpvoid_t inp,
+                           dword_t inp_size, lpvoid_t out, lpvoid_t feed,
+                           bool encrypt) {
+  mbedtls_aes_context ctx;
+  if (!AesScheduleContext(sched, encrypt, &ctx)) return;
+  uint32_t n = inp_size & ~15u;
+  if (n) {
+    mbedtls_aes_crypt_cbc(&ctx, encrypt ? MBEDTLS_AES_ENCRYPT : MBEDTLS_AES_DECRYPT,
+                          n, feed.as<uint8_t*>(), inp.as<uint8_t*>(),
+                          out.as<uint8_t*>());
+  }
+  mbedtls_aes_free(&ctx);
+}
+
+void XeCryptAesCbcEncrypt_entry(pointer_t<X_AES_SCHEDULE> sched, lpvoid_t inp,
+                                dword_t inp_size, lpvoid_t out, lpvoid_t feed) {
+  AesScheduleCbc(sched, inp, inp_size, out, feed, true);
+}
+DECLARE_XBOXKRNL_EXPORT1(XeCryptAesCbcEncrypt, kNone, kImplemented);
+
+void XeCryptAesCbcDecrypt_entry(pointer_t<X_AES_SCHEDULE> sched, lpvoid_t inp,
+                                dword_t inp_size, lpvoid_t out, lpvoid_t feed) {
+  AesScheduleCbc(sched, inp, inp_size, out, feed, false);
+}
+DECLARE_XBOXKRNL_EXPORT1(XeCryptAesCbcDecrypt, kNone, kImplemented);
+
 void XeCryptHmacSha_entry(lpvoid_t key, dword_t key_size_in, lpvoid_t inp_1,
                           dword_t inp_1_size, lpvoid_t inp_2,
                           dword_t inp_2_size, lpvoid_t inp_3,
