@@ -84,7 +84,11 @@ class StackArgList : public ArgList {
   StackArgList(PPCContext* ppc_context, int32_t index)
       : ppc_context(ppc_context), index_(index) {}
 
-  uint32_t get32() { return (uint32_t)get64(); }
+  // A 32-bit stack argument is stored with stw at the start of its 8-byte
+  // slot (XAM's and the applets' code, e.g. the seconds of the account
+  // recovery timestamp at r1+0x54), so it must be read as a word there, not
+  // as the low half of a doubleword, which is the next slot's high word.
+  uint32_t get32() { return util::get_arg_32(ppc_context, index_++); }
 
   uint64_t get64() { return util::get_arg_64(ppc_context, index_++); }
 
