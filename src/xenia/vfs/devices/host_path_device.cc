@@ -9,6 +9,9 @@
 
 #include "xenia/vfs/devices/host_path_device.h"
 
+#include <algorithm>
+#include <cctype>
+
 #include "xenia/base/filesystem.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
@@ -158,6 +161,21 @@ void HostPathDevice::PopulateEntry(
     if (child_info.type == xe::filesystem::FileInfo::Type::kFile &&
         child_info.name == kPackageThumbnailFileName) {
       continue;
+    }
+
+    if (child_info.type == xe::filesystem::FileInfo::Type::kFile) {
+      bool hidden = false;
+      const std::string child_name = xe::path_to_utf8(child_info.name);
+      for (const auto& name : hidden_names_) {
+        hidden |= std::equal(name.begin(), name.end(), child_name.begin(),
+                             child_name.end(), [](char a, char b) {
+                               return std::tolower((unsigned char)a) ==
+                                      std::tolower((unsigned char)b);
+                             });
+      }
+      if (hidden) {
+        continue;
+      }
     }
 
     // On the content partition, present a single-file package (a directory

@@ -38,6 +38,12 @@ class HostPathDevice : public Device {
 
   bool is_read_only() const override { return read_only_; }
 
+  // File names (compared case-insensitively) left out of the tree the guest
+  // sees. Must be set before Initialize().
+  void set_hidden_names(std::vector<std::string> names) {
+    hidden_names_ = std::move(names);
+  }
+
   bool supports_concurrent_io() const override { return true; }
 
   const std::string& name() const override { return name_; }
@@ -64,6 +70,7 @@ class HostPathDevice : public Device {
   std::unique_ptr<Entry> root_entry_;
   bool read_only_;
   bool collapse_content_packages_;
+  std::vector<std::string> hidden_names_;
 };
 
 }  // namespace vfs

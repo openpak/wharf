@@ -2254,6 +2254,8 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
   auto systemext_device = std::make_unique<vfs::HostPathDevice>(
       "\\Device\\Harddisk0\\SystemExtPartition", storage_root_ / "systemext",
       true);
+  // The dash relaunches into dash.xex from here; Wharf has no hand-off for it.
+  systemext_device->set_hidden_names({"dash.xex"});
   if (systemext_device->Initialize()) {
     file_system_->RegisterDevice(std::move(systemext_device));
   }
