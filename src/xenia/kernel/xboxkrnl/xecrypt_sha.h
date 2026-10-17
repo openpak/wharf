@@ -214,6 +214,27 @@ inline void XeCryptSha512Final(XECRYPT_SHA512_STATE* state, uint8_t* out,
   std::memcpy(state->buffer, digest, sizeof(digest));
 }
 
+// SHA-384 shares the SHA-512 state layout; the init vector and the digest
+// length differ.
+inline void XeCryptSha384Init(XECRYPT_SHA512_STATE* state) {
+  mbedtls_sha512_context context;
+  mbedtls_sha512_init(&context);
+  mbedtls_sha512_starts(&context, 1);
+  StoreSha512(context, *state);
+}
+
+inline void XeCryptSha384Final(XECRYPT_SHA512_STATE* state, uint8_t* out,
+                               uint32_t out_size) {
+  auto context = LoadSha512(*state);
+  context.MBEDTLS_PRIVATE(is384) = 1;
+  uint8_t digest[48];
+  mbedtls_sha512_finish(&context, digest);
+  if (out_size) {
+    std::memcpy(out, digest, std::min<uint32_t>(out_size, sizeof(digest)));
+  }
+  std::memcpy(state->buffer, digest, sizeof(digest));
+}
+
 inline void XeCryptHmacShaInit(XECRYPT_HMACSHA_STATE* state, const uint8_t* key,
                                uint32_t key_size) {
   key_size = std::min<uint32_t>(key_size, 64);

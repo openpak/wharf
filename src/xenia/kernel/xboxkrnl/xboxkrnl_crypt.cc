@@ -510,6 +510,24 @@ void XeCryptSha512Final_entry(pointer_t<XECRYPT_SHA512_STATE> sha_state,
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptSha512Final, kNone, kImplemented);
 
+void XeCryptSha384Init_entry(pointer_t<XECRYPT_SHA512_STATE> sha_state) {
+  XeCryptSha384Init(sha_state);
+}
+DECLARE_XBOXKRNL_EXPORT1(XeCryptSha384Init, kNone, kImplemented);
+
+// Update is the SHA-512 block function on the same state.
+void XeCryptSha384Update_entry(pointer_t<XECRYPT_SHA512_STATE> sha_state,
+                               lpvoid_t input, dword_t input_size) {
+  XeCryptSha512Update(sha_state, input.as<uint8_t*>(), input_size);
+}
+DECLARE_XBOXKRNL_EXPORT1(XeCryptSha384Update, kNone, kImplemented);
+
+void XeCryptSha384Final_entry(pointer_t<XECRYPT_SHA512_STATE> sha_state,
+                              pointer_t<uint8_t> out, dword_t out_size) {
+  XeCryptSha384Final(sha_state, out, out_size);
+}
+DECLARE_XBOXKRNL_EXPORT1(XeCryptSha384Final, kNone, kImplemented);
+
 void XeCryptMd5Init_entry(pointer_t<XECRYPT_MD5_STATE> md5_state) {
   XeCryptMd5Init(md5_state);
 }
