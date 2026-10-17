@@ -342,9 +342,6 @@ dword_result_t XeKeysExSaveKeyVault_entry() { return 0; }
 DECLARE_XBOXKRNL_EXPORT1(XeKeysExSaveKeyVault, kNone, kStub);
 dword_result_t XeKeysExSetKey_entry() { return 0; }
 DECLARE_XBOXKRNL_EXPORT1(XeKeysExSetKey, kNone, kStub);
-dword_result_t XeKeysObfuscate_entry() { return 0; }
-DECLARE_XBOXKRNL_EXPORT1(XeKeysObfuscate, kNone, kStub);
-
 // Media Transfer Protocol devices (portable players on USB): none attached.
 // XAM polls this with (3, int devices[4], uint* count).
 dword_result_t MtpdGetCurrentDevices_entry(dword_t type, lpdword_t devices,
