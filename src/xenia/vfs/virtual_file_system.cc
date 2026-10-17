@@ -285,6 +285,12 @@ X_STATUS VirtualFileSystem::OpenFile(Entry* root_entry,
 
     auto file_name = xe::utf8::find_name_from_guest_path(path);
     entry = parent_entry->GetChild(file_name);
+    // The path may itself be the mount point of a more specific device
+    // (\Device\Harddisk0\Partition1\Content under the Partition1 NullDevice):
+    // the parent's device has no such child, the longest mount does.
+    if (!entry && !root_entry) {
+      entry = ResolvePath(path);
+    }
   } else if (path.empty() && root_entry) {
     // An empty relative path is the root entry itself. Replacing it would
     // delete what the root handle still refers to.
