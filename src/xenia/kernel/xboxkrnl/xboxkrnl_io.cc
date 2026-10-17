@@ -667,6 +667,45 @@ dword_result_t NtQueryFullAttributesFile_entry(
 }
 DECLARE_XBOXKRNL_EXPORT1(NtQueryFullAttributesFile, kFileSystem, kImplemented);
 
+// Deletes a file or an empty directory by name. XAM's profile delete
+// (Download Profile replacing an existing profile) removes the package's
+// files this way and retries forever while they still exist.
+dword_result_t NtDeleteFile_entry(pointer_t<X_OBJECT_ATTRIBUTES> obj_attribs) {
+  if (!obj_attribs) {
+    return X_STATUS_INVALID_PARAMETER;
+  }
+  if (obj_attribs->root_directory != 0xFFFFFFFD &&  // ObDosDevices
+      obj_attribs->root_directory != 0) {
+    XELOGE("NtDeleteFile: relative to a directory handle is not supported");
+    return X_STATUS_NOT_IMPLEMENTED;
+  }
+  auto object_name =
+      util::TranslateAnsiStringPointer(kernel_memory(), obj_attribs->name_ptr);
+  auto target_path = util::TranslateAnsiPath(kernel_memory(), object_name);
+  xeObStripDosDevicesPrefix(target_path);
+  if (!IsValidPath(target_path, false)) {
+    return X_STATUS_OBJECT_NAME_INVALID;
+  }
+  X_STATUS result = X_STATUS_OBJECT_NAME_NOT_FOUND;
+  kernel_state()->RunBlockingIo(
+      [&]() {
+        vfs::Entry* entry =
+            kernel_state()->file_system()->ResolvePath(target_path);
+        if (!entry) {
+          return;
+        }
+        if (!entry->parent() || !entry->Delete()) {
+          result = X_STATUS_ACCESS_DENIED;
+          return;
+        }
+        result = X_STATUS_SUCCESS;
+      },
+      GuestScheduler::BlockingCallClass::kConcurrent);
+  XELOGI("NtDeleteFile({}) = {:08X}", target_path, result);
+  return result;
+}
+DECLARE_XBOXKRNL_EXPORT1(NtDeleteFile, kFileSystem, kImplemented);
+
 dword_result_t NtQueryDirectoryFile_entry(
     dword_t file_handle, dword_t event_handle, function_t apc_routine,
     lpvoid_t apc_context, pointer_t<X_IO_STATUS_BLOCK> io_status_block,
