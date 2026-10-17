@@ -285,6 +285,25 @@ void RtlCopyString_entry(pointer_t<X_ANSI_STRING> destination,
 }
 DECLARE_XBOXKRNL_EXPORT1(RtlCopyString, kNone, kImplemented);
 
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlappendstringtostring
+dword_result_t RtlAppendStringToString_entry(
+    pointer_t<X_ANSI_STRING> destination, pointer_t<X_ANSI_STRING> source) {
+  if (!source || !source->length) {
+    return X_STATUS_SUCCESS;
+  }
+  uint32_t length = uint32_t(destination->length) + source->length;
+  if (length > destination->maximum_length) {
+    return X_STATUS_BUFFER_TOO_SMALL;
+  }
+  auto dst_buf = kernel_memory()->TranslateVirtual<uint8_t*>(
+      destination->pointer);
+  auto src_buf = kernel_memory()->TranslateVirtual<uint8_t*>(source->pointer);
+  std::memmove(dst_buf + destination->length, src_buf, source->length);
+  destination->length = uint16_t(length);
+  return X_STATUS_SUCCESS;
+}
+DECLARE_XBOXKRNL_EXPORT1(RtlAppendStringToString, kNone, kImplemented);
+
 void RtlCopyUnicodeString_entry(pointer_t<X_UNICODE_STRING> destination,
                                 pointer_t<X_UNICODE_STRING> source) {
   if (!source) {
