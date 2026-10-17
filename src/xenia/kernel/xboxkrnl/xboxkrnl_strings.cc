@@ -354,9 +354,13 @@ int32_t format_core(PPCContext* ppc_context, FormatData& data, ArgList& args,
             char* start = end;
             start[0] = '\0';
 
-            while (precision-- > 0 || value != 0) {
-              const auto digit = static_cast<uint64_t>(value) % radix;
-              value /= radix;
+            // Unsigned from here on: a 64-bit value with the top bit set
+            // (%I64X of an offline XUID, 0xE...) must not be divided as a
+            // negative number.
+            uint64_t uvalue = static_cast<uint64_t>(value);
+            while (precision-- > 0 || uvalue != 0) {
+              const auto digit = uvalue % radix;
+              uvalue /= radix;
               assert_true(digit < strlen(digits));
               *--start = digits[digit];
             }
