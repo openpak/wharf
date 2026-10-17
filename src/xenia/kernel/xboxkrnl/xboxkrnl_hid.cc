@@ -76,6 +76,29 @@ dword_result_t XInputdReadState_entry(dword_t device_id,
                                   &read) != X_ERROR_SUCCESS) {
     return 0xC000009D;
   }
+  // The pad is bound twice (port type 0, device 0x40..., and port type 3,
+  // device 0x43..., see Emulator::Launch), and XAM makes keystrokes from both,
+  // so one host press arrived twice. Split the host state: the type 3
+  // (keystroke) device gets the digital buttons, the type 0 device the
+  // shoulders, triggers and sticks. Without a type 3 device nothing changes.
+  {
+    static bool keystroke_device_seen = false;
+    const bool keystroke_device = ((uint32_t(device_id) >> 24) & 0xF) == 3;
+    keystroke_device_seen |= keystroke_device;
+    constexpr uint16_t kShoulders = 0x0300;  // LB, RB
+    const uint16_t buttons = read.gamepad.buttons;
+    if (keystroke_device) {
+      read.gamepad.buttons = uint16_t(buttons & ~kShoulders);
+      read.gamepad.left_trigger = 0;
+      read.gamepad.right_trigger = 0;
+      read.gamepad.thumb_lx = 0;
+      read.gamepad.thumb_ly = 0;
+      read.gamepad.thumb_rx = 0;
+      read.gamepad.thumb_ry = 0;
+    } else if (keystroke_device_seen) {
+      read.gamepad.buttons = uint16_t(buttons & kShoulders);
+    }
+  }
   *state = read;
   return 0;
 }
