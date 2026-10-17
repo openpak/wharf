@@ -308,11 +308,53 @@ DECLARE_XBOXKRNL_EXPORT1(XInputdSetFailedConnectionOrBindCallback, kNone,
 dword_result_t EtxProducerRegister_entry() { return 0; }
 DECLARE_XBOXKRNL_EXPORT1(EtxProducerRegister, kNone, kStub);
 
+// ETX (event tracing) consumer side. Wharf has no trace producer, so there is
+// nothing to drain: every consumer call succeeds with nothing to do, which
+// lets XAM's ETX worker commit a flush request (app 0xFE message 0x27105,
+// issued by the account-recovery applet before every step) in one pass.
+// Refusing the registration instead left the dashboard blank at boot.
+dword_result_t EtxConsumerRegister_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(EtxConsumerRegister, kNone, kStub);
+dword_result_t EtxConsumerUnregister_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(EtxConsumerUnregister, kNone, kStub);
+dword_result_t EtxConsumerEnableEventType_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(EtxConsumerEnableEventType, kNone, kStub);
+dword_result_t EtxConsumerDisableEventType_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(EtxConsumerDisableEventType, kNone, kStub);
+dword_result_t EtxConsumerProcessLogs_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(EtxConsumerProcessLogs, kNone, kStub);
+dword_result_t EtxConsumerFlushBuffers_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(EtxConsumerFlushBuffers, kNone, kStub);
+
 dword_result_t KeSetPriorityClassThread_entry() { return 0; }
 DECLARE_XBOXKRNL_EXPORT1(KeSetPriorityClassThread, kNone, kStub);
 
 dword_result_t XexShimLock_entry() { return 0; }
 DECLARE_XBOXKRNL_EXPORT1(XexShimLock, kNone, kStub);
+
+// Real XAM calls these while it sets up Live; none matters without console keys.
+dword_result_t VdRegisterXamGraphicsNotification_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(VdRegisterXamGraphicsNotification, kNone, kStub);
+
+dword_result_t XAudioSetVoiceCategoryVolume_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(XAudioSetVoiceCategoryVolume, kNone, kStub);
+dword_result_t XeKeysExSaveKeyVault_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(XeKeysExSaveKeyVault, kNone, kStub);
+dword_result_t XeKeysExSetKey_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(XeKeysExSetKey, kNone, kStub);
+dword_result_t XeKeysObfuscate_entry() { return 0; }
+DECLARE_XBOXKRNL_EXPORT1(XeKeysObfuscate, kNone, kStub);
+
+// Media Transfer Protocol devices (portable players on USB): none attached.
+// XAM polls this with (3, int devices[4], uint* count).
+dword_result_t MtpdGetCurrentDevices_entry(dword_t type, lpdword_t devices,
+                                           lpdword_t count) {
+  if (count) {
+    *count = 0;
+  }
+  return X_STATUS_SUCCESS;
+}
+DECLARE_XBOXKRNL_EXPORT1(MtpdGetCurrentDevices, kNone, kImplemented);
 
 dword_result_t XeKeysGetStatus_entry(lpdword_t status) {
   if (status) {
