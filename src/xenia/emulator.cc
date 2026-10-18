@@ -149,6 +149,19 @@ UPDATE_from_bool(mount_cache, 2024, 8, 31, 20, false);
 DEFINE_bool(mount_memory_unit, false, "Enable memory unit (MU) mount",
             "Storage");
 
+DEFINE_path(roms_path, "",
+            "Read-only folder of game backups shown to the real dashboard: "
+            "the first .iso in it becomes the disc in \\Device\\Cdrom0 and "
+            "XBLA/<titleid>/<type>/<package> STFS packages appear as "
+            "installed content. Nothing is written there. Empty disables.",
+            "Storage");
+
+DEFINE_string(disc, "",
+              "Which disc image from roms_path sits in the DVD drive: a part "
+              "of its file name (case-insensitive). Empty takes the first "
+              "image in name order.",
+              "Storage");
+
 DEFINE_path(xefu_path, "",
             "Folder with XeFu, the Xbox 360's original Xbox emulator: xbox.xex "
             "and the xefu*.xex builds it picks from, as the console's system "
@@ -2238,10 +2251,80 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
   // directly, not through the save:/dlc: symlinks. Without this the open lands
   // on the NullDevice below and fails, so a title can never see its own
   // existing content and keeps recreating it.
+  // roms_path: empty title folders in the content tree (before it is scanned)
+  // so the nested read-only XBLA mounts below are listed under the common user.
+  std::vector<std::pair<std::string, std::filesystem::path>> xbla_titles;
+  if (!cvars::roms_path.empty()) {
+    std::error_code ec;
+    const auto xbla_dir = cvars::roms_path / "XBLA";
+    for (const auto& entry :
+         std::filesystem::directory_iterator(xbla_dir, ec)) {
+      const auto name = xe::path_to_utf8(entry.path().filename());
+      if (name.size() != 8 || !entry.is_directory(ec)) {
+        continue;
+      }
+      std::filesystem::create_directories(
+          content_root_ / "0000000000000000" / name, ec);
+      xbla_titles.emplace_back(name, entry.path());
+    }
+  }
   auto content_device = std::make_unique<vfs::HostPathDevice>(
       "\\Device\\Harddisk0\\Partition1\\Content", content_root_, false, true);
   if (content_device->Initialize()) {
     file_system_->RegisterDevice(std::move(content_device));
+  }
+
+  for (const auto& [name, host] : xbla_titles) {
+    auto xbla_device = std::make_unique<vfs::HostPathDevice>(
+        "\\Device\\Harddisk0\\Partition1\\Content\\0000000000000000\\" +
+            name,
+        host, true);
+    if (xbla_device->Initialize()) {
+      file_system_->RegisterDevice(std::move(xbla_device));
+      XELOGI("roms_path: XBLA title {} mounted read-only", name);
+    }
+  }
+  if (!cvars::roms_path.empty() &&
+      !file_system_->GetDevice("\\Device\\Cdrom0")) {
+    std::error_code ec;
+    std::vector<std::filesystem::path> isos;
+    for (const auto& entry :
+         std::filesystem::directory_iterator(cvars::roms_path, ec)) {
+      auto ext = xe::path_to_utf8(entry.path().extension());
+      std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+      if ((ext == ".iso" || ext == ".xiso") && entry.is_regular_file(ec)) {
+        isos.push_back(entry.path());
+      }
+    }
+    std::sort(isos.begin(), isos.end());
+    auto chosen = isos.begin();
+    if (!cvars::disc.empty()) {
+      auto lower = [](std::string v) {
+        std::transform(v.begin(), v.end(), v.begin(), ::tolower);
+        return v;
+      };
+      const auto want = lower(cvars::disc);
+      chosen = std::find_if(isos.begin(), isos.end(), [&](const auto& iso) {
+        return lower(xe::path_to_utf8(iso.filename())).find(want) !=
+               std::string::npos;
+      });
+      if (chosen == isos.end()) {
+        XELOGW("roms_path: no disc image matches --disc={}", cvars::disc);
+      }
+    }
+    XELOGI("roms_path: {} disc image(s) found", isos.size());
+    if (chosen != isos.end()) {
+      auto disc = std::make_unique<vfs::DiscImageDevice>("\\Device\\Cdrom0",
+                                                         *chosen);
+      if (disc->Initialize()) {
+        file_system_->RegisterDevice(std::move(disc));
+        XELOGI("roms_path: disc {} on \\Device\\Cdrom0",
+               xe::path_to_utf8(chosen->filename()));
+      } else {
+        XELOGE("roms_path: cannot read disc image {}",
+               xe::path_to_utf8(*chosen));
+      }
+    }
   }
 
   // The real XAM reads \Device\Harddisk0\SystemExtPartition\system.manifest
