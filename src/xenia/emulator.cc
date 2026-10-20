@@ -2740,6 +2740,28 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
           manager[0] = 5;
           XELOGI("real_xam: published running dashboard {:08X}, state {} -> 5",
                  uint32_t(running_info->title_id), prior_state);
+          // The skipped title-start broadcast also initializes XAM's pending
+          // notification listener and publishes the current UI, sign-in and
+          // media states. Run that native subset before the title listener is
+          // created, so the dashboard receives its initial media notification
+          // and starts the content scan. A raw storage broadcast is too early
+          // here and is lost without the native pending listener.
+          constexpr uint32_t kXamTitleNotifications = 0x816A94E0;
+          const auto* notify_insn =
+              memory()->TranslateVirtual<const xe::be<uint32_t>*>(
+                  kXamTitleNotifications);
+          if (static_cast<uint32_t>(*notify_insn) == 0x7D8802A6) {
+            auto notifications = kernel::object_ref<kernel::XThread>(
+                new kernel::XThread(kernel_state(), 0x40000, 0,
+                                    kXamTitleNotifications, 0, 0, true, false,
+                                    kernel_state()->GetSystemProcess()));
+            notifications->set_name("real xam title notifications");
+            if (XSUCCEEDED(notifications->Create())) {
+              uint64_t timeout = static_cast<uint64_t>(-10 * 10000000LL);
+              const X_STATUS result = notifications->Wait(0, 0, 0, &timeout);
+              XELOGI("real_xam: title notifications: {:08X}", result);
+            }
+          }
         } else {
           XELOGW("real_xam: skipped dashboard publication: state={} title={:08X} "
                  "info={:08X}", prior_state, prior_title, info_title);
