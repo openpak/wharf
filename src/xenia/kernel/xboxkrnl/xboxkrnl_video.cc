@@ -282,9 +282,10 @@ dword_result_t VdInitializeEngines_entry(unknown_t unk0, function_t callback,
 DECLARE_XBOXKRNL_EXPORT1(VdInitializeEngines, kVideo, kStub);
 
 void VdShutdownEngines_entry() {
-  // Ignored for now.
-  // Games seem to call an Initialize/Shutdown pair to query info, then
-  // re-initialize.
+  // A title's graphics callback points into its executable. Native title
+  // termination shuts down the engines before that executable is unmapped.
+  // Drop the callback so vblank cannot dispatch into the retired title.
+  kernel_state()->emulator()->graphics_system()->SetInterruptCallback(0, 0);
 }
 DECLARE_XBOXKRNL_EXPORT1(VdShutdownEngines, kVideo, kStub);
 

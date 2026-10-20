@@ -867,6 +867,31 @@ dword_result_t NtReleaseSemaphore_entry(dword_t sem_handle,
 DECLARE_XBOXKRNL_EXPORT2(NtReleaseSemaphore, kThreading, kImplemented,
                          kHighFrequency);
 
+void KeInitializeMutant_entry(pointer_t<X_KMUTANT> mutant_ptr,
+                              dword_t initial_owner) {
+  mutant_ptr.Zero();
+  mutant_ptr->header.type = MutantObject;
+  mutant_ptr->header.signal_state = initial_owner ? 0 : 1;
+  auto mutant = XObject::GetNativeObject<XMutant>(
+      kernel_state(), mutant_ptr, MutantObject);
+  assert_not_null(mutant);
+}
+DECLARE_XBOXKRNL_EXPORT1(KeInitializeMutant, kThreading, kImplemented);
+
+dword_result_t KeReleaseMutant_entry(pointer_t<X_KMUTANT> mutant_ptr,
+                                     dword_t increment, dword_t abandon,
+                                     dword_t wait) {
+  auto mutant = XObject::GetNativeObject<XMutant>(
+      kernel_state(), mutant_ptr, MutantObject);
+  if (!mutant) {
+    return X_STATUS_INVALID_HANDLE;
+  }
+  int32_t previous_state = mutant_ptr->header.signal_state;
+  X_STATUS status = mutant->ReleaseMutant(increment, !!abandon, !!wait);
+  return status == X_STATUS_SUCCESS ? uint32_t(previous_state) : status;
+}
+DECLARE_XBOXKRNL_EXPORT1(KeReleaseMutant, kThreading, kImplemented);
+
 dword_result_t NtCreateMutant_entry(
     lpdword_t handle_out, pointer_t<X_OBJECT_ATTRIBUTES> obj_attributes,
     dword_t initial_owner) {
