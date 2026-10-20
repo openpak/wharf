@@ -764,6 +764,12 @@ void XThread::Execute() {
   uint32_t next_address;
 #if !XE_PLATFORM_WIN32
   try {
+    if (title_init_routine_) {
+      uint64_t init_args[] = {0};
+      kernel_state()->processor()->Execute(thread_state_, title_init_routine_,
+                                            init_args, 1);
+      title_init_routine_ = 0;
+    }
     exit_code = static_cast<int>(kernel_state()->processor()->Execute(
         thread_state_, address, args.data(), args.size()));
     next_address = 0;
@@ -799,6 +805,12 @@ void XThread::Execute() {
   if (setjmp(reentry_jmp_buf_) != 0) {
     next_address = reentry_address_;
   } else {
+    if (title_init_routine_) {
+      uint64_t init_args[] = {0};
+      kernel_state()->processor()->Execute(thread_state_, title_init_routine_,
+                                            init_args, 1);
+      title_init_routine_ = 0;
+    }
     exit_code = static_cast<int>(kernel_state()->processor()->Execute(
         thread_state_, address, args.data(), args.size()));
     next_address = 0;

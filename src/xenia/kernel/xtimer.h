@@ -39,6 +39,7 @@ class XTimer : public XObject {
 
   // Disarms every timer so none fires into a kernel being torn down.
   static void CancelAll();
+  static void CancelForProcess(uint32_t process);
 
  protected:
   xe::threading::WaitHandle* GetWaitHandle() override {
@@ -59,6 +60,7 @@ class XTimer : public XObject {
   std::mutex timer_lock_;
 
   // Reused across expiries like the KAPC a KTIMER embeds.
+  std::atomic<uint32_t> owner_process_{0};
   uint32_t apc_ptr_ = 0;
   object_ref<XThread> apc_thread_;
 };

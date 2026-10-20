@@ -159,6 +159,8 @@ class Emulator {
   bool is_relaunching() const { return relaunching_; }
 
   uint32_t main_thread_id();
+  void BeginNativeTitleTransition();
+  void AdoptNativeTitle(kernel::object_ref<kernel::XThread> thread);
 
   // Window used for displaying graphical output. Can be null.
   ui::Window* display_window() const { return display_window_; }
@@ -560,6 +562,8 @@ class Emulator {
   bool paused_;
   bool restoring_;
   std::atomic<bool> relaunching_{false};
+  std::atomic<bool> native_title_transition_{false};
+  std::mutex native_main_thread_mutex_;
   // Held across a launch and a whole relaunch so title teardown waits for a
   // launch to finish. Recursive, as a relaunch launches under it.
   std::recursive_mutex launch_mutex_;

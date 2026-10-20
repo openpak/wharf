@@ -167,6 +167,7 @@ class GuestScheduler {
   // stack again. Otherwise its dispatcher runs it to a safepoint or wait
   // resume point where it exits and is reclaimed.
   bool TerminateThread(XThread* thread);
+  bool IsThreadQuiescent(XThread* thread);
 
   // Ends the calling fiber now if an external Terminate marked it, handing it
   // to the dispatcher for reclaim. Returns otherwise.

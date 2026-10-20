@@ -317,6 +317,7 @@ X_STATUS UserModule::Unload() {
   if (module_format_ == kModuleFormatXex && processor_module_ &&
       xex_module()->Unload()) {
     OnUnload();
+    processor_module_ = nullptr;
     return X_STATUS_SUCCESS;
   }
 

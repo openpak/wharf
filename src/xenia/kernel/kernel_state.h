@@ -95,6 +95,7 @@ static_assert_size(X_KPROCESS, 0x60);
 struct TerminateNotification {
   uint32_t guest_routine;
   uint32_t priority;
+  uint32_t registration;
 };
 
 // structure for KeTimeStampBuindle
@@ -241,7 +242,8 @@ class KernelState {
   uint32_t AllocateTLS(cpu::ppc::PPCContext* context);
   void FreeTLS(cpu::ppc::PPCContext* context, uint32_t slot);
 
-  void RegisterTitleTerminateNotification(uint32_t routine, uint32_t priority);
+  void RegisterTitleTerminateNotification(uint32_t routine, uint32_t priority,
+                                         uint32_t registration);
   void RemoveTitleTerminateNotification(uint32_t routine);
 
   void RegisterModule(XModule* module);
@@ -301,6 +303,8 @@ class KernelState {
   // Terminates a title: Unloads all modules, and kills all guest threads.
   // This DOES NOT RETURN if called from a guest thread!
   void TerminateTitle();
+  void TerminateTitleProcess();
+  X_STATUS StartTitleExecutable(uint32_t init_routine);
 
   // Handles a game-requested exit to the dashboard: hands off to the host UI
   // when it registered a handler, otherwise terminates the title.

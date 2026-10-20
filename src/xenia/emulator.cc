@@ -2096,12 +2096,34 @@ bool Emulator::ExceptionCallback(Exception* ex) {
   return false;
 }
 
+void Emulator::BeginNativeTitleTransition() {
+  native_title_transition_.store(true, std::memory_order_release);
+}
+
+void Emulator::AdoptNativeTitle(kernel::object_ref<kernel::XThread> thread) {
+  {
+    std::lock_guard lock(native_main_thread_mutex_);
+    main_thread_ = std::move(thread);
+  }
+  native_title_transition_.store(false, std::memory_order_release);
+}
+
 void Emulator::WaitUntilExit() {
   while (true) {
-    if (main_thread_) {
-      // Use wait_handle() rather than thread(): a fiber-backed main thread has
-      // no host thread, only an exit event.
-      xe::threading::Wait(main_thread_->wait_handle(), false);
+    kernel::object_ref<kernel::XThread> waited;
+    {
+      std::lock_guard lock(native_main_thread_mutex_);
+      waited = main_thread_;
+    }
+    if (waited) {
+      xe::threading::Wait(waited->wait_handle(), false);
+    }
+    while (native_title_transition_.load(std::memory_order_acquire)) {
+      xe::threading::Sleep(std::chrono::milliseconds(10));
+    }
+    {
+      std::lock_guard lock(native_main_thread_mutex_);
+      if (waited.get() != main_thread_.get()) continue;
     }
 
     if (restoring_) {
@@ -2736,6 +2758,7 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
         const uint32_t info_title = manager[0x34 / 4];
         if (prior_state == 1 && prior_title == 0 &&
             info_title == running_info->title_id) {
+          manager[0x2E8 / 4] = 0;  // The externally started first title is live.
           manager[0x28C / 4] = running_info->title_id;
           manager[0] = 5;
           XELOGI("real_xam: published running dashboard {:08X}, state {} -> 5",

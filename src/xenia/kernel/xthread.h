@@ -439,6 +439,7 @@ class XThread : public XObject, public cpu::Thread {
   // True if the thread is created by the guest app.
   bool is_guest_thread() const { return guest_thread_; }
   bool main_thread() const { return main_thread_; }
+  void set_title_init_routine(uint32_t address) { title_init_routine_ = address; }
   bool is_running() const { return running_; }
 
   // True for threads that run a host C++ routine (XHostThread) on a real host
@@ -839,6 +840,7 @@ class XThread : public XObject, public cpu::Thread {
   std::unique_ptr<xe::threading::Fiber> fiber_;
   xe::threading::Fiber* active_fiber_ = nullptr;
   std::unique_ptr<UserMode> user_mode_;
+  uint32_t title_init_routine_ = 0;
   SchedulerLinks scheduler_links_;
   // Set by the first ReclaimExited so both terminal paths reclaim once.
   std::atomic<bool> self_reference_dropped_{false};

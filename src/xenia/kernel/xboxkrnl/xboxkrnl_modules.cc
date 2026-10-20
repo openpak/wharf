@@ -196,13 +196,36 @@ dword_result_t XexLoadImageFromMemory_entry(lpdword_t buffer, dword_t size,
 DECLARE_XBOXKRNL_EXPORT1(XexLoadImageFromMemory, kModules, kImplemented);
 
 dword_result_t XexLoadExecutable_entry(lpstring_t module_name,
+                                       lpdword_t hmodule_ptr,
                                        dword_t module_flags,
-                                       dword_t min_version,
-                                       lpdword_t hmodule_ptr) {
-  return XexLoadImage_entry(module_name, module_flags, min_version,
-                            hmodule_ptr);
+                                       dword_t min_version) {
+  // XAM must have retired the old title before mapping another at its base.
+  if (kernel_state()->GetExecutableModule()) {
+    XELOGE("XexLoadExecutable: old title is still active; refusing {}",
+           module_name.value());
+    return X_STATUS_UNSUCCESSFUL;
+  }
+  const uint32_t result = XexLoadImage_entry(
+      module_name, module_flags, min_version, hmodule_ptr);
+  if (XSUCCEEDED(result)) {
+    auto loaded = kernel_state()->GetModule(module_name.value(), true);
+    if (!loaded) return X_STATUS_NO_SUCH_FILE;
+    kernel_state()->SetExecutableModule(
+        retain_object(static_cast<UserModule*>(loaded.get())));
+  }
+  return result;
 }
 DECLARE_XBOXKRNL_EXPORT1(XexLoadExecutable, kModules, kSketchy);
+
+void ExTerminateTitleProcess_entry() {
+  kernel_state()->TerminateTitleProcess();
+}
+DECLARE_XBOXKRNL_EXPORT1(ExTerminateTitleProcess, kModules, kSketchy);
+
+dword_result_t XexStartExecutable_entry(dword_t init_routine) {
+  return kernel_state()->StartTitleExecutable(init_routine);
+}
+DECLARE_XBOXKRNL_EXPORT1(XexStartExecutable, kModules, kSketchy);
 
 dword_result_t XexUnloadImage_entry(lpvoid_t hmodule) {
   auto module = XModule::GetFromHModule(kernel_state(), hmodule);
@@ -277,7 +300,7 @@ void ExRegisterTitleTerminateNotification_entry(
   if (create) {
     // Adding.
     kernel_state()->RegisterTitleTerminateNotification(
-        reg->notification_routine, reg->priority);
+        reg->notification_routine, reg->priority, reg.guest_address());
   } else {
     // Removing.
     kernel_state()->RemoveTitleTerminateNotification(reg->notification_routine);

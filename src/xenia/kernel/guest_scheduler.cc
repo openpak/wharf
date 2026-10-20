@@ -778,6 +778,18 @@ bool GuestScheduler::ForgetThread(XThread* thread) {
   return reclaimable;
 }
 
+bool GuestScheduler::IsThreadQuiescent(XThread* thread) {
+  std::lock_guard<std::mutex> lock(lock_);
+  const auto& links = thread->scheduler_links();
+  if (links.running || links.queued || links.blocked || links.suspended) {
+    return false;
+  }
+  for (const auto& cpu : cpus_) {
+    if (cpu.current_thread == thread) return false;
+  }
+  return true;
+}
+
 bool GuestScheduler::TerminateThread(XThread* thread) {
   int wake_cpu = -1;
   {

@@ -371,15 +371,19 @@ void KernelState::FreeTLS(cpu::ppc::PPCContext* context, uint32_t slot) {
 }
 
 void KernelState::RegisterTitleTerminateNotification(uint32_t routine,
-                                                     uint32_t priority) {
+                                                     uint32_t priority,
+                                                     uint32_t registration) {
+  auto lock = global_critical_region_.Acquire();
   TerminateNotification notify;
   notify.guest_routine = routine;
   notify.priority = priority;
+  notify.registration = registration;
 
   terminate_notifications_.push_back(notify);
 }
 
 void KernelState::RemoveTitleTerminateNotification(uint32_t routine) {
+  auto lock = global_critical_region_.Acquire();
   for (auto it = terminate_notifications_.begin();
        it != terminate_notifications_.end(); it++) {
     if (it->guest_routine == routine) {
@@ -554,6 +558,11 @@ void KernelState::SetExecutableModule(object_ref<UserModule> module) {
   }
   executable_module_ = std::move(module);
   if (!executable_module_) {
+    auto handle_export = processor()->export_resolver()->GetExportByOrdinal(
+        "xboxkrnl.exe", ordinals::XexExecutableModuleHandle);
+    if (handle_export && handle_export->variable_ptr) {
+      *memory()->TranslateVirtual<xe::be<uint32_t>*>(handle_export->variable_ptr) = 0;
+    }
     return;
   }
 
@@ -985,6 +994,95 @@ void KernelState::UnloadUserModule(const object_ref<UserModule>& module,
 
 void KernelState::InitXmpVolumePatch() {
   xmp_volume_patch_ = XmpVolumePatch::CreateForTitle(title_id(), this);
+}
+
+void KernelState::TerminateTitleProcess() {
+  auto* caller = XThread::GetCurrentThread();
+  // The native XAM loader owns a system thread and must survive this call.
+  if (!caller || caller->guest_object<X_KTHREAD>()->process_type !=
+                     X_PROCTYPE_SYSTEM) {
+    XELOGE("native title termination requires a system loader thread");
+    return;
+  }
+  emulator()->BeginNativeTitleTransition();
+
+  auto threads = object_table()->GetObjectsByType<XThread>(XObject::Type::Thread);
+  std::vector<object_ref<XThread>> retiring;
+  for (auto& thread : threads) {
+    if (!thread->is_host_thread() && thread.get() != caller &&
+        thread->guest_object<X_KTHREAD>()->process == GetTitleProcess()) {
+      retiring.push_back(thread);
+    }
+  }
+  XELOGI("native title termination: retiring {} title threads", retiring.size());
+  for (auto& thread : retiring) thread->Terminate(0);
+  if (GuestScheduler::enabled()) {
+    for (auto& thread : retiring) {
+      while (!guest_scheduler()->IsThreadQuiescent(thread.get())) {
+        GuestScheduler::SpinYield(std::chrono::milliseconds(1));
+      }
+    }
+  }
+  XTimer::CancelForProcess(GetTitleProcess());
+
+  std::vector<TerminateNotification> notifications;
+  {
+    auto lock = global_critical_region_.Acquire();
+    notifications = terminate_notifications_;
+  }
+  // Use the signed descending order implied by XAM's positive-priority
+  // boost, zero-priority cleanup and negative-priority restore callbacks.
+  std::stable_sort(notifications.begin(), notifications.end(),
+                   [](const auto& a, const auto& b) {
+                     return int32_t(a.priority) > int32_t(b.priority);
+                   });
+  for (const auto& notify : notifications) {
+    XELOGI("native title termination: callback {:08X} priority {:08X}",
+           notify.guest_routine, notify.priority);
+    // Native callbacks may unregister themselves using this exact record.
+    uint64_t args[] = {notify.registration};
+    processor()->Execute(caller->thread_state(), notify.guest_routine, args, 1);
+    XELOGI("native title termination: callback {:08X} returned",
+           notify.guest_routine);
+  }
+  XTimer::CancelForProcess(GetTitleProcess());
+
+  std::vector<object_ref<UserModule>> title_modules;
+  {
+    auto lock = global_critical_region_.Acquire();
+    for (auto& module : user_modules_) {
+      // TITLE also marks title DLLs such as dashnui. XAM, the Guide and
+      // system services have no TITLE flag and remain mapped.
+      if (module->is_executable()) title_modules.push_back(module);
+    }
+    std::erase_if(terminate_notifications_, [&](const auto& notify) {
+      return std::any_of(title_modules.begin(), title_modules.end(),
+                         [&](const auto& module) {
+                           return module->xex_module()->ContainsAddress(
+                               notify.guest_routine);
+                         });
+    });
+  }
+  SetExecutableModule(nullptr);
+  for (auto& module : title_modules) {
+    XELOGI("native title termination: unloading {}", module->name());
+    UnloadUserModule(module, false);
+    module->Unload();
+  }
+  XELOGI("native title termination: complete; system threads preserved");
+}
+
+X_STATUS KernelState::StartTitleExecutable(uint32_t init_routine) {
+  auto module = GetExecutableModule();
+  if (!module || module->is_dll_module()) return X_STATUS_INVALID_PARAMETER;
+  auto thread = LaunchModule(module);
+  if (!thread) return X_STATUS_UNSUCCESSFUL;
+  thread->set_title_init_routine(init_routine);
+  emulator()->AdoptNativeTitle(thread);
+  XELOGI("native title start: {} entry {:08X}, initializer {:08X}",
+         module->name(), module->entry_point(), init_routine);
+  thread->Resume();
+  return X_STATUS_SUCCESS;
 }
 
 void KernelState::TerminateTitle() {

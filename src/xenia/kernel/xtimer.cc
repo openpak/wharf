@@ -93,12 +93,23 @@ void XTimer::CancelAll() {
   }
 }
 
+void XTimer::CancelForProcess(uint32_t process) {
+  auto global_lock = xe::global_critical_region::AcquireDirect();
+  std::lock_guard<std::mutex> lock(LiveTimersLock());
+  for (XTimer* timer : LiveTimers()) {
+    if (timer->owner_process_ == process && timer->timer_) timer->Cancel();
+  }
+}
+
 X_STATUS XTimer::SetTimer(int64_t due_time, uint32_t period_ms,
                           uint32_t routine, uint32_t routine_arg, bool resume,
                           uint32_t dpc) {
   using xe::chrono::WinSystemClock;
   using xe::chrono::XSystemClock;
 
+  if (auto* caller = XThread::GetCurrentThread()) {
+    owner_process_ = caller->guest_object<X_KTHREAD>()->process.m_ptr;
+  }
   std::lock_guard<std::mutex> lock(timer_lock_);
 
   period_ms = Clock::ScaleGuestDurationMillis(period_ms);
