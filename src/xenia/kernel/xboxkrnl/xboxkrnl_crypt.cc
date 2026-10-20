@@ -37,6 +37,7 @@
 #include "xenia/kernel/xboxkrnl/xecrypt_rsa.h"
 #include "xenia/kernel/xboxkrnl/xecrypt_dh.h"
 #include "xenia/kernel/xboxkrnl/xecrypt_sha.h"
+#include "xenia/kernel/xboxkrnl/xecrypt_rotsum.h"
 
 DEFINE_string(console_ca_key, "",
               "Wharf DEV: file with the OpenPak dev console CA private key\n"
@@ -1279,9 +1280,16 @@ DECLARE_XBOXKRNL_EXPORT1(XeKeysHmacSha, kNone, kImplemented);
 void XeCryptRotSumSha_entry(lpvoid_t inp_1, dword_t inp_1_size, lpvoid_t inp_2,
                             dword_t inp_2_size, lpvoid_t out,
                             dword_t out_size) {
-  // out used by XeCryptBnQwBeSigVerify
+  const auto digest = RotSumSha(inp_1_size ? inp_1.as<const uint8_t*>() : nullptr,
+                                inp_1_size,
+                                inp_2_size ? inp_2.as<const uint8_t*>() : nullptr,
+                                inp_2_size);
+  if (out && out_size) {
+    std::memcpy(out.as<uint8_t*>(), digest.data(),
+                std::min<size_t>(out_size, digest.size()));
+  }
 }
-DECLARE_XBOXKRNL_EXPORT1(XeCryptRotSumSha, kNone, kStub);
+DECLARE_XBOXKRNL_EXPORT1(XeCryptRotSumSha, kNone, kImplemented);
 
 dword_result_t XeKeysAesCbcUsingKey_entry(lpvoid_t obscured_key,
                                           lpvoid_t inp_ptr, dword_t inp_size,

@@ -117,6 +117,13 @@ bool VirtualFileSystem::FindSymbolicLink(const std::string_view path,
   return true;
 }
 
+// Translate a complete guest path, retaining the suffix after each link.
+bool VirtualFileSystem::TranslateSymbolicLink(const std::string_view path,
+                                              std::string& target) {
+  auto global_lock = global_critical_region_.Acquire();
+  return ResolveSymbolicLink(path, target);
+}
+
 bool VirtualFileSystem::ResolveSymbolicLink(const std::string_view path,
                                             std::string& result) {
   result = path;

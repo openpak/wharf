@@ -2337,8 +2337,9 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
   auto systemext_device = std::make_unique<vfs::HostPathDevice>(
       "\\Device\\Harddisk0\\SystemExtPartition", storage_root_ / "systemext",
       true);
-  // The dash relaunches into dash.xex from here; Wharf has no hand-off for it.
-  systemext_device->set_hidden_names({"dash.xex"});
+  // Keep the installed dashboard visible: the original system manifest
+  // validates it before registering the extended system. The running-dashboard
+  // publication below keeps ordinary dashboard URI navigation in process.
   if (systemext_device->Initialize()) {
     file_system_->RegisterDevice(std::move(systemext_device));
   }
@@ -2718,7 +2719,33 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
         memory()->TranslateVirtual<const xe::be<uint32_t>*>(0x81A9F850);
     XELOGI("real_xam: xam state pointer at 81A9F850 = {:08X}",
            static_cast<uint32_t>(*state_ptr));
-  }
+    // Wharf starts the dashboard itself after the native loader was skipped.
+    // The title-info step above supplies Live logon, but the loader normally
+    // publishes a separate current title at +0x28C and running state 5. Without
+    // those, XamLaunchURI attempts an executable restart for gameslibrary:.
+    // Publish only the measured idle dashboard bootstrap. Replaying the native
+    // callback would initialize the title heap and broadcast twice.
+    if (wait == X_STATUS_SUCCESS && !getenv("WHARF_NODASHRUNNING")) {
+      xex2_opt_execution_info* running_info = nullptr;
+      module->GetOptHeader(XEX_HEADER_EXECUTION_INFO, &running_info);
+      const uint32_t state = *state_ptr;
+      if (state && running_info && running_info->title_id == 0xFFFE07D1u) {
+        auto* manager = memory()->TranslateVirtual<xe::be<uint32_t>*>(state);
+        const uint32_t prior_state = manager[0];
+        const uint32_t prior_title = manager[0x28C / 4];
+        const uint32_t info_title = manager[0x34 / 4];
+        if (prior_state == 1 && prior_title == 0 &&
+            info_title == running_info->title_id) {
+          manager[0x28C / 4] = running_info->title_id;
+          manager[0] = 5;
+          XELOGI("real_xam: published running dashboard {:08X}, state {} -> 5",
+                 uint32_t(running_info->title_id), prior_state);
+        } else {
+          XELOGW("real_xam: skipped dashboard publication: state={} title={:08X} "
+                 "info={:08X}", prior_state, prior_title, info_title);
+        }
+      }
+    }  }
 
   on_launch(title_id_.value(), title_name_);
 

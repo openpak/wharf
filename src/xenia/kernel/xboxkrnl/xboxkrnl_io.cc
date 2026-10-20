@@ -326,7 +326,12 @@ dword_result_t NtReadFile_entry(dword_t file_handle, dword_t event_handle,
       return status;
     };
 
-    if (CompletesAsync(file.get(), byte_offset, thread.get(),
+    // Unnotified reads may complete inline on asynchronous handles. Native
+    // XAM validates resource headers and signed font data immediately after
+    // these calls. Preserve deferred completion for event/APC-based I/O.
+    const bool inline_unnotified = !event_handle && !apc_routine;
+    if (!inline_unnotified &&
+        CompletesAsync(file.get(), byte_offset, thread.get(),
                        QueuesApc(apc_routine, apc_context_address))) {
       if (ev) {
         ev->Reset();

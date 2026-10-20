@@ -550,7 +550,7 @@ dword_result_t ObTranslateSymbolicLink_entry(dword_t attributes_ptr,
   auto name = xeObSymbolicLinkName(
       util::TranslateAnsiPath(kernel_memory(), name_string));
   std::string target;
-  if (!kernel_state()->file_system()->FindSymbolicLink(name, target)) {
+  if (!kernel_state()->file_system()->TranslateSymbolicLink(name, target)) {
     return 0xC0000034;  // STATUS_OBJECT_NAME_NOT_FOUND
   }
   const uint32_t capacity = out->maximum_length;
