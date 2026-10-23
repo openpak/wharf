@@ -28,6 +28,7 @@
 #include "xenia/kernel/xfile.h"
 #include "xenia/vfs/devices/host_path_device.h"
 #include "xenia/vfs/devices/host_path_entry.h"
+#include "xenia/vfs/devices/xcontent_container_device.h"
 #include "xenia/xbox.h"
 
 namespace xe {
@@ -48,6 +49,27 @@ constexpr uint32_t kDeviceObjectSize = 0x50;  // X_DEVICE_OBJECT
 // STFS volume descriptor sits at header +0x379.
 constexpr uint32_t kExtensionVolumeDescriptor = 0x38 + 0x379;
 constexpr uint32_t kVolumeDescriptorSize = 0x24;
+
+// A device object with the extension right behind it (as IoCreateDevice).
+uint32_t AllocDeviceObject(uint32_t extension_size) {
+  auto* memory = kernel_memory();
+  const uint32_t total =
+      kDeviceObjectSize + xe::align<uint32_t>(extension_size, 8);
+  const uint32_t device_ptr = memory->SystemHeapAlloc(total);
+  if (!device_ptr) {
+    return 0;
+  }
+  auto* device_object = memory->TranslateVirtual<uint8_t*>(device_ptr);
+  std::memset(device_object, 0, total);
+  xe::store_and_swap<uint16_t>(device_object + 0x00, 3);  // type
+  xe::store_and_swap<uint16_t>(device_object + 0x02,
+                               uint16_t(kDeviceObjectSize + extension_size));
+  xe::store_and_swap<uint32_t>(device_object + 0x0C, device_ptr);
+  xe::store_and_swap<uint32_t>(device_object + 0x18,
+                               device_ptr + kDeviceObjectSize);
+  device_object[0x1E] = 1;  // stack size
+  return device_ptr;
+}
 
 }  // namespace
 
@@ -88,21 +110,10 @@ dword_result_t StfsCreateDevice_entry(dword_t params_ptr, dword_t params_size) {
     return X_STATUS_UNSUCCESSFUL;
   }
 
-  // A device object with the extension right behind it (as IoCreateDevice).
-  const uint32_t total = kDeviceObjectSize + xe::align<uint32_t>(extension_size, 8);
-  const uint32_t device_ptr = memory->SystemHeapAlloc(total);
+  const uint32_t device_ptr = AllocDeviceObject(extension_size);
   if (!device_ptr) {
     return X_STATUS_NO_MEMORY;
   }
-  auto* device_object = memory->TranslateVirtual<uint8_t*>(device_ptr);
-  std::memset(device_object, 0, total);
-  xe::store_and_swap<uint16_t>(device_object + 0x00, 3);  // type
-  xe::store_and_swap<uint16_t>(device_object + 0x02,
-                               uint16_t(kDeviceObjectSize + extension_size));
-  xe::store_and_swap<uint32_t>(device_object + 0x0C, device_ptr);
-  xe::store_and_swap<uint32_t>(device_object + 0x18,
-                               device_ptr + kDeviceObjectSize);
-  device_object[0x1E] = 1;  // stack size
 
   xe::store_and_swap<uint32_t>(params + kParamDeviceOut, device_ptr);
   xe::store_and_swap<uint32_t>(params + kParamExtensionOut,
@@ -112,6 +123,83 @@ dword_result_t StfsCreateDevice_entry(dword_t params_ptr, dword_t params_size) {
   return X_STATUS_SUCCESS;
 }
 DECLARE_XBOXKRNL_EXPORT1(StfsCreateDevice, kFileSystem, kImplemented);
+
+// SVOD (Games on Demand) mounting. XAM 17559 FUN_816808C8 calls this for a
+// package whose volume descriptor type (header +0x3A9) is 1, with a 0x2C-byte
+// block: +0x00 ANSI_STRING device name, +0x08 ANSI_STRING "<package>.data"
+// (the folder of DataNNNN files next to the header), +0x14 pointer to the
+// header's volume descriptor, +0x1C device extension size, out +0x20 device
+// object, out +0x24 extension. The kernel's SVOD file system serves the
+// read-only GDFX image inside the data files; Wharf uses its SVOD reader.
+dword_result_t SvodCreateDevice_entry(dword_t params_ptr) {
+  auto* memory = kernel_memory();
+  if (!params_ptr) {
+    return X_STATUS_INVALID_PARAMETER;
+  }
+  auto* params = memory->TranslateVirtual<uint8_t*>(params_ptr);
+  const std::string name = util::TranslateAnsiPath(
+      memory, reinterpret_cast<const X_ANSI_STRING*>(params + 0x00));
+  std::string data_path = util::TranslateAnsiPath(
+      memory, reinterpret_cast<const X_ANSI_STRING*>(params + 0x08));
+  const uint32_t extension_size = xe::load_and_swap<uint32_t>(params + 0x1C);
+
+  constexpr std::string_view kDataSuffix = ".data";
+  if (name.empty() || !data_path.ends_with(kDataSuffix)) {
+    XELOGE("SvodCreateDevice({}, {}): unexpected data path", name, data_path);
+    return X_STATUS_INVALID_PARAMETER;
+  }
+  data_path.resize(data_path.size() - kDataSuffix.size());
+  auto* fs = kernel_state()->file_system();
+  auto* host_entry =
+      dynamic_cast<vfs::HostPathEntry*>(fs->ResolvePath(data_path));
+  // XAM cuts a long package name to 37 characters for the folder name; the
+  // package is the file in the same folder whose name starts with that.
+  const size_t slash = data_path.find_last_of('\\');
+  if (!host_entry && slash != std::string::npos &&
+      data_path.size() - slash - 1 == 37) {
+    const std::string prefix = data_path.substr(slash + 1);
+    auto* parent = fs->ResolvePath(data_path.substr(0, slash));
+    for (size_t i = 0; parent && i < parent->children().size(); ++i) {
+      auto* child = parent->children()[i].get();
+      if (!(child->attributes() & vfs::kFileAttributeDirectory) &&
+          child->name().size() > 37 && child->name().starts_with(prefix)) {
+        host_entry = dynamic_cast<vfs::HostPathEntry*>(child);
+        break;
+      }
+    }
+  }
+  if (!host_entry) {
+    XELOGE("SvodCreateDevice({}): package {} is not a host file", name,
+           data_path);
+    return X_STATUS_OBJECT_NAME_NOT_FOUND;
+  }
+
+  auto device = vfs::XContentContainerDevice::CreateContentDevice(
+      name, host_entry->host_path());
+  if (!device || !device->Initialize()) {
+    XELOGE("SvodCreateDevice({}): cannot read SVOD package {}", name,
+           xe::path_to_utf8(host_entry->host_path()));
+    return X_STATUS_UNSUCCESSFUL;
+  }
+  if (fs->GetDevice(name)) {
+    fs->UnregisterDevice(name);
+  }
+  if (!fs->RegisterDevice(std::move(device))) {
+    return X_STATUS_UNSUCCESSFUL;
+  }
+
+  const uint32_t device_ptr = AllocDeviceObject(extension_size);
+  if (!device_ptr) {
+    return X_STATUS_NO_MEMORY;
+  }
+  xe::store_and_swap<uint32_t>(params + 0x20, device_ptr);
+  xe::store_and_swap<uint32_t>(params + 0x24, device_ptr + kDeviceObjectSize);
+  XELOGI("SvodCreateDevice({}) -> {} (device {:08X}, extension {:X} bytes)",
+         name, xe::path_to_utf8(host_entry->host_path()), device_ptr,
+         extension_size);
+  return X_STATUS_SUCCESS;
+}
+DECLARE_XBOXKRNL_EXPORT1(SvodCreateDevice, kFileSystem, kImplemented);
 
 // Codes seen in XAM 17559: 0 lock, 1 unlock, 2 flush, 3 read the volume
 // descriptor, 4 write it, 5 query. XAM creates a package with a zero volume
