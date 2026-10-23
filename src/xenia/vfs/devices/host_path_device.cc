@@ -81,6 +81,27 @@ bool IsContentTypeName(const std::string& name) {
   return true;
 }
 
+// The device root is the Content folder, so a content-type folder sits at
+// <xuid>\<title id>\<type>: three components. Title ids are also 8 hex
+// digits; without this depth check a title folder whose only child folder holds
+// one package file was taken for a single-file package parent and the type
+// folder was presented as a file, which hid every installed game from the
+// dashboard's content scan. Package names have no dot; a Games on Demand
+// package's "<name>.data" folder of SVOD data files is never collapsed.
+bool IsContentTypeLevel(const std::string& path) {
+  size_t components = 0;
+  bool in_component = false;
+  for (char c : path) {
+    if (c == '\\' || c == '/') {
+      in_component = false;
+    } else if (!in_component) {
+      in_component = true;
+      ++components;
+    }
+  }
+  return components == 3;
+}
+
 // A single-file content package is a directory holding one payload file. The
 // thumbnail is Xenia bookkeeping, not game data, so it is ignored. Returns that
 // payload's info so the package can be presented as the file itself.
@@ -184,7 +205,9 @@ void HostPathDevice::PopulateEntry(
     // sees the save instead of an empty directory.
     if (collapse_content_packages_ &&
         child_info.type == xe::filesystem::FileInfo::Type::kDirectory &&
-        IsContentTypeName(parent_entry->name())) {
+        IsContentTypeName(parent_entry->name()) &&
+        IsContentTypeLevel(parent_entry->path()) &&
+        !child_info.name.has_extension()) {
       const auto package_dir = parent_entry->host_path() / child_info.name;
       xe::filesystem::FileInfo payload;
       if (ResolveSinglePackagePayload(package_dir, payload)) {
