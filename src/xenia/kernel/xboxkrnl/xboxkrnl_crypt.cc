@@ -38,12 +38,17 @@
 #include "xenia/kernel/xboxkrnl/xecrypt_dh.h"
 #include "xenia/kernel/xboxkrnl/xecrypt_sha.h"
 #include "xenia/kernel/xboxkrnl/xecrypt_rotsum.h"
+#include "xenia/kernel/xboxkrnl/openpak_xsigner.h"
 
 DEFINE_string(console_ca_key, "",
               "Wharf DEV: file with the OpenPak dev console CA private key\n"
               "(two lines, 'n=<hex>' and 'd=<hex>', 2048 bit). Only used the\n"
               "first time to issue this instance's console certificate; it is\n"
               "never copied. Without it the console has no usable certificate.",
+              "Kernel");
+
+DEFINE_string(xsigner_public_key, "",
+              "OpenPak XSigner public RSA-2048 modulus file (512 hex digits).",
               "Kernel");
 
 namespace xe {
@@ -1374,6 +1379,16 @@ dword_result_t XeKeysVerifyRSASignature_entry(dword_t key_index, lpvoid_t hash,
                                               lpvoid_t signature) {
   if (!hash || !signature) {
     return 0;
+  }
+  if ((key_index == 1 || key_index == 3) && !cvars::xsigner_public_key.empty()) {
+    std::ifstream file(cvars::xsigner_public_key);
+    std::string modulus;
+    file >> modulus;
+    const bool verified = openpak_xsigner::Verify(
+        modulus, hash.as<uint8_t*>(), signature.as<uint8_t*>());
+    XELOGI("OpenPak content signature: key {} verified {}", uint32_t(key_index),
+           verified);
+    return verified ? 1 : 0;
   }
   if (key_index != 0) {
     XELOGW("XeKeysVerifyRSASignature: key {} is not implemented",
