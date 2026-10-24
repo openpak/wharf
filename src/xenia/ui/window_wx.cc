@@ -190,7 +190,11 @@ WxWindow::~WxWindow() {
   EnterDestructor();
 #if XE_PLATFORM_LINUX
   if (pending_paint_source_) {
-    g_source_remove(pending_paint_source_);
+    // The id may be stale if its callback already ran, so look it up.
+    if (GSource* source = g_main_context_find_source_by_id(
+            nullptr, pending_paint_source_)) {
+      g_source_destroy(source);
+    }
     pending_paint_source_ = 0;
   }
 #endif
@@ -593,14 +597,19 @@ void WxWindow::RequestPaintImpl() {
 #elif XE_PLATFORM_LINUX
   // Schedule via glib's main loop (not wx's pending-event queue) so X11 input
   // events at higher priority preempt back-to-back paints.
-  if (pending_paint_source_) {
+  // Requested from the guest output thread while the UI thread may run the
+  // callback at once: the flag, not the source id, decides whether a request
+  // is already queued. Checking the id raced - the callback could reset it
+  // before the id was stored, after which the stale id stuck and every later
+  // request was dropped, freezing the window until an expose event.
+  if (paint_request_pending_.exchange(true, std::memory_order_acq_rel)) {
     return;
   }
   pending_paint_source_ = g_idle_add_full(
       G_PRIORITY_LOW,
       [](gpointer user_data) -> gboolean {
         auto* self = static_cast<WxWindow*>(user_data);
-        self->pending_paint_source_ = 0;
+        self->paint_request_pending_.store(false, std::memory_order_release);
         if (self->render_panel_) {
           self->OnPaint(true);
         }

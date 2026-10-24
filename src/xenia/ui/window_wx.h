@@ -10,6 +10,7 @@
 #ifndef XENIA_UI_WINDOW_WX_H_
 #define XENIA_UI_WINDOW_WX_H_
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <string>
@@ -148,6 +149,10 @@ class WxWindow : public Window {
 #endif
 
 #if XE_PLATFORM_LINUX
+  // Set before the idle source is added and cleared by its callback, so a
+  // request is never dropped because the callback ran (and reset the source
+  // id) before g_idle_add_full returned its id to the requesting thread.
+  std::atomic<bool> paint_request_pending_{false};
   unsigned int pending_paint_source_ = 0;
   GtkSurfaceFactory gtk_surface_factory_;
 #endif
