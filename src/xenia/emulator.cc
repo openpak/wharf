@@ -2386,6 +2386,28 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
     file_system_->RegisterDevice(std::move(null_device));
   }
 
+  // XAM's device monitor probes "\Device\Harddisk0\Partition1\" with
+  // NtQueryFullAttributesFile; unless the root exists the HDD is left in state 4
+  // and the content layer reports no storage device.
+  {
+    auto hdd_root = std::make_unique<vfs::NullDevice>(
+        "\\Device\\Harddisk0\\Partition1", std::initializer_list<std::string>{});
+    if (hdd_root->Initialize()) {
+      file_system_->RegisterDevice(std::move(hdd_root));
+    }
+  }
+
+  // The real XAM opens \Device\DeviceAuth (the device-authentication driver)
+  // at start-up and stops the console (KeBugCheck 0x29) when it cannot. The
+  // open resolves the parent \Device first, so the null device mounts there.
+  {
+    auto device_auth = std::make_unique<vfs::NullDevice>(
+        "\\Device", std::initializer_list<std::string>{"\\DeviceAuth"});
+    if (device_auth->Initialize()) {
+      file_system_->RegisterDevice(std::move(device_auth));
+    }
+  }
+
   ResetTitleState();
 
   // Allow xam to request module loads.

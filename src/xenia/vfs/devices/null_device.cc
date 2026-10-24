@@ -46,7 +46,7 @@ Entry* NullDevice::ResolvePath(const std::string_view path) {
   XELOGFS("NullDevice::ResolvePath({})", path);
 
   auto root = root_entry_.get();
-  if (path.empty()) {
+  if (path.empty() || path == "\\") {
     return root_entry_.get();
   }
 

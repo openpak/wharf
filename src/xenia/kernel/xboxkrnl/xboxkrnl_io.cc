@@ -876,6 +876,10 @@ dword_result_t NtDeviceIoControlFile_entry(
     auto buffer = output_buffer.as<X_PARTITION_INFO*>();
     buffer->unk = 0;
     buffer->total_size = cache_size;
+  } else if (io_control_code == 0x474000) {
+    // \Device\DeviceAuth: XAM's long-lived "wait for a device authentication
+    // event" request. It stays pending; with no device events it never ends.
+    return 0x103;  // STATUS_PENDING
   } else {
     XELOGD("NtDeviceIoControlFile(0x{:X}) - unhandled IOCTL!",
            uint32_t(io_control_code));

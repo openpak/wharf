@@ -551,7 +551,27 @@ dword_result_t ObTranslateSymbolicLink_entry(dword_t attributes_ptr,
       util::TranslateAnsiPath(kernel_memory(), name_string));
   std::string target;
   if (!kernel_state()->file_system()->TranslateSymbolicLink(name, target)) {
-    return 0xC0000034;  // STATUS_OBJECT_NAME_NOT_FOUND
+    // Not a link: a name under a registered device translates to itself (XAM
+    // FUN_8167fcd8 canonicalises \Device\Harddisk0\Partition1\Content\... this
+    // way before creating a profile package, which need not exist yet).
+    auto* fs = kernel_state()->file_system();
+    std::string_view prefix = name;
+    bool under_device = false;
+    while (!prefix.empty() && !under_device) {
+      if (fs->GetDevice(prefix)) {
+        under_device = true;
+        break;
+      }
+      const size_t cut = prefix.find_last_of('\\');
+      if (cut == std::string_view::npos || cut == 0) {
+        break;
+      }
+      prefix = prefix.substr(0, cut);
+    }
+    if (!under_device) {
+      return 0xC0000034;  // STATUS_OBJECT_NAME_NOT_FOUND
+    }
+    target = name;
   }
   const uint32_t capacity = out->maximum_length;
   const uint32_t length = std::min<uint32_t>(
