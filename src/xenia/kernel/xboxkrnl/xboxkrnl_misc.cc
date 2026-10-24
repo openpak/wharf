@@ -7,13 +7,18 @@
  ******************************************************************************
  */
 
+#include <atomic>
+#include <chrono>
 #include <memory>
+#include <mutex>
+#include <vector>
 
 #include "xenia/base/math.h"
 #include "xenia/cpu/lzx.h"
 #include "xenia/cpu/processor.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
+#include "xenia/kernel/xboxkrnl/xboxkrnl_threading.h"
 #include "xenia/kernel/xthread.h"
 #include "xenia/xbox.h"
 

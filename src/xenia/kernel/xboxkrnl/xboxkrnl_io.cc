@@ -715,7 +715,8 @@ dword_result_t NtQueryDirectoryFile_entry(
     dword_t file_handle, dword_t event_handle, function_t apc_routine,
     lpvoid_t apc_context, pointer_t<X_IO_STATUS_BLOCK> io_status_block,
     pointer_t<X_FILE_DIRECTORY_INFORMATION> file_info_ptr, dword_t length,
-    pointer_t<X_ANSI_STRING> file_name, dword_t restart_scan) {
+    pointer_t<X_ANSI_STRING> file_name, dword_t restart_scan,
+    const ppc_context_t& ctx) {
   if (length < 72) {
     return X_STATUS_INFO_LENGTH_MISMATCH;
   }
@@ -744,6 +745,26 @@ dword_result_t NtQueryDirectoryFile_entry(
 
   if (XFAILED(result)) {
     info = 0;
+  }
+
+  // TEMP-DIAG (content scan): which directory entries the guest sees.
+  if (file && file->entry()) {
+    std::string chain = fmt::format("{:08X}", uint32_t(ctx->lr));
+    uint32_t sp = uint32_t(ctx->r[1]);
+    for (int i = 0; i < 6 && sp; ++i) {
+      auto* mem = kernel_memory();
+      uint32_t prev = xe::load_and_swap<uint32_t>(mem->TranslateVirtual<uint8_t*>(sp));
+      if (!prev || prev <= sp) break;
+      chain += fmt::format(" {:08X}", xe::load_and_swap<uint32_t>(
+                                          mem->TranslateVirtual<uint8_t*>(prev - 8)));
+      sp = prev;
+    }
+    XELOGI("NtQueryDirectoryFile[{}]({}, pattern '{}', restart {}) = {:08X} -> '{}'",
+           chain, file->entry()->path(), name, uint32_t(restart_scan), result,
+           XSUCCEEDED(result) ? std::string(reinterpret_cast<const char*>(
+                                                file_info_ptr->file_name),
+                                            file_info_ptr->file_name_length)
+                              : std::string());
   }
 
   if (io_status_block) {

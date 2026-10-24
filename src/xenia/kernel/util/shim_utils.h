@@ -10,6 +10,7 @@
 #ifndef XENIA_KERNEL_UTIL_SHIM_UTILS_H_
 #define XENIA_KERNEL_UTIL_SHIM_UTILS_H_
 
+#include <atomic>
 #include <cstring>
 #include <string>
 #include <tuple>
@@ -506,6 +507,17 @@ void AppendKernelCallParams(StringBuffer& string_buffer,
 
 StringBuffer* thread_local_string_buffer();
 
+// TEMP-DIAG: ring of the last kernel calls, for the crash dump.
+struct WharfCallRecord {
+  const char* name;
+  const void* context;
+  uint32_t args[4];
+  uint64_t lr;
+};
+constexpr size_t kWharfCallRing = 8192;
+extern WharfCallRecord g_wharf_calls[kWharfCallRing];
+extern std::atomic<uint32_t> g_wharf_call_index;
+
 template <typename Tuple>
 XE_NOALIAS void PrintKernelCall(cpu::Export* export_entry,
                                 const Tuple& params) {
@@ -559,6 +571,18 @@ struct ExportRegistrerHelper {
         // The make_tuple order is undefined per the C++ standard and
         // cause inconsitencies between msvc and clang.
         std::tuple<Ps...> params = {Ps(init)...};
+        {  // TEMP-DIAG
+          auto& rec = g_wharf_calls[g_wharf_call_index.fetch_add(
+                                        1, std::memory_order_relaxed) %
+                                    kWharfCallRing];
+          rec.name = export_entry->name;
+          rec.context = ppc_context;
+          rec.args[0] = uint32_t(ppc_context->r[3]);
+          rec.args[1] = uint32_t(ppc_context->r[4]);
+          rec.args[2] = uint32_t(ppc_context->r[5]);
+          rec.args[3] = uint32_t(ppc_context->r[6]);
+          rec.lr = ppc_context->lr;
+        }
         if (TAGS & xe::cpu::ExportTag::kLog &&
             (!(TAGS & xe::cpu::ExportTag::kHighFrequency) ||
              cvars::log_high_frequency_kernel_calls)) {

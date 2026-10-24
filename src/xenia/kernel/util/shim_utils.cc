@@ -24,3 +24,12 @@ XThread* ContextParam::CurrentXThread() const {
 }  // namespace shim
 }  // namespace kernel
 }  // namespace xe
+
+namespace xe {
+namespace kernel {
+namespace shim {
+WharfCallRecord g_wharf_calls[kWharfCallRing];
+std::atomic<uint32_t> g_wharf_call_index{0};
+}  // namespace shim
+}  // namespace kernel
+}  // namespace xe

@@ -10,6 +10,7 @@
 #include <ranges>
 
 #include "xenia/emulator.h"
+#include "xenia/kernel/util/shim_utils.h"
 
 #include <algorithm>
 #include <chrono>
@@ -2008,6 +2009,39 @@ bool Emulator::ExceptionCallback(Exception* ex) {
           fiber_self->handle(), fiber_self->thread_id(), code_name,
           fault_detail, ex->pc(), module_offset, guest_lr, host_sp,
           host_sp % 16);
+      {  // TEMP-DIAG fiber crash: guest frames, registers, kernel calls
+        std::string d = "FIBERDIAG\n";
+        auto* gctx = fiber_self->thread_state()->context();
+        if (auto* hc = ex->thread_context()) {
+#if XE_ARCH_AMD64
+          const uint64_t* hsp = reinterpret_cast<const uint64_t*>(hc->rsp);
+          int found = 0;
+          d += "Host-stack guest frames:";
+          for (int i = 0; i < 16384 && found < 40; ++i) {
+            const uint64_t word = hsp[i];
+            if (word < 0x10000) continue;
+            auto* fn = code_cache->LookupFunction(word);
+            if (!fn) continue;
+            d += fmt::format(" {:08X}(fn {:08X})", fn->MapMachineCodeToGuestAddress(word), fn->address());
+            ++found;
+          }
+          d += "\n";
+#endif
+        }
+        for (int i = 0; i < 32; i += 4) {
+          d += fmt::format(" r{}={:08X} r{}={:08X} r{}={:08X} r{}={:08X}\n", i, uint32_t(gctx->r[i]), i + 1, uint32_t(gctx->r[i + 1]), i + 2, uint32_t(gctx->r[i + 2]), i + 3, uint32_t(gctx->r[i + 3]));
+        }
+        const uint32_t end = kernel::shim::g_wharf_call_index.load();
+        int printed = 0;
+        for (uint32_t i = 0; i < kernel::shim::kWharfCallRing && printed < 40; ++i) {
+          const auto& rec = kernel::shim::g_wharf_calls[(end - 1 - i) % kernel::shim::kWharfCallRing];
+          if (rec.context != gctx || !rec.name) continue;
+          if (strstr(rec.name, "CriticalRegion") || strstr(rec.name, "CriticalSection") || strstr(rec.name, "KeTls") || strstr(rec.name, "KeGetCurrentProcessType")) continue;
+          d += fmt::format("  {}({:08X}, {:08X}, {:08X}, {:08X}) lr {:08X}\n", rec.name, rec.args[0], rec.args[1], rec.args[2], rec.args[3], uint32_t(rec.lr));
+          ++printed;
+        }
+        XELOGE("{}", d);
+      }
       DivertToThunk(ex, &HaltCrashedFiberThunk);
       return true;
     }
@@ -2061,6 +2095,52 @@ bool Emulator::ExceptionCallback(Exception* ex) {
                                  ex->fault_address()));
   } else if (ex->code() == Exception::Code::kIllegalInstruction) {
     crash_msg.append("Illegal Instruction\n");
+  }
+  {  // TEMP-DIAG host stack scan: JIT return addresses -> guest call chain
+    crash_msg.append("Host-stack guest frames:");
+    if (auto* host_context = ex->thread_context()) {
+#if XE_ARCH_AMD64
+      const uint64_t* hsp = reinterpret_cast<const uint64_t*>(host_context->rsp);
+      int found = 0;
+      for (int i = 0; i < 16384 && found < 40; ++i) {
+        const uint64_t word = hsp[i];
+        if (word < 0x10000) continue;
+        auto* fn = code_cache->LookupFunction(word);
+        if (!fn) continue;
+        crash_msg.append(fmt::format(" {:08X}(fn {:08X})",
+                                     fn->MapMachineCodeToGuestAddress(word),
+                                     fn->address()));
+        ++found;
+      }
+#endif
+    }
+    crash_msg.append("\n");
+  }
+  {  // TEMP-DIAG last kernel calls of this guest thread
+    crash_msg.append("Last kernel calls:\n");
+    const uint32_t end = kernel::shim::g_wharf_call_index.load();
+    int printed = 0;
+    for (uint32_t i = 0; i < kernel::shim::kWharfCallRing && printed < 60; ++i) {
+      const auto& rec =
+          kernel::shim::g_wharf_calls[(end - 1 - i) % kernel::shim::kWharfCallRing];
+      if (rec.context != context || !rec.name) continue;
+      if (strstr(rec.name, "CriticalRegion") || strstr(rec.name, "CriticalSection")) continue;
+      crash_msg.append(fmt::format("  {}({:08X}, {:08X}, {:08X}, {:08X}) lr {:08X}\n",
+                                   rec.name, rec.args[0], rec.args[1],
+                                   rec.args[2], rec.args[3], uint32_t(rec.lr)));
+      ++printed;
+    }
+  }
+  {  // TEMP-DIAG guest backchain
+    uint32_t sp = uint32_t(context->r[1]);
+    crash_msg.append("Backchain LRs:");
+    for (int i = 0; i < 14 && sp; ++i) {
+      const uint32_t prev = xe::load_and_swap<uint32_t>(memory_->TranslateVirtual(sp));
+      if (!prev || prev <= sp) break;
+      crash_msg.append(fmt::format(" {:08X}", xe::load_and_swap<uint32_t>(memory_->TranslateVirtual(prev - 8))));
+      sp = prev;
+    }
+    crash_msg.append("\n");
   }
   crash_msg.append("Registers:\n");
   for (int i = 0; i < 32; i++) {
@@ -2277,6 +2357,37 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
   // Per-title config has been applied by now and no guest code has been
   // translated yet, which is the only window where this can be picked up.
   processor_->RefreshTraceCountsEnabled();
+
+  if (const char* watch = getenv("WHARF_WATCH")) {  // TEMP-DIAG
+    for (const char* c = watch; c && *c; c = strchr(c, ',') ? strchr(c, ',') + 1 : nullptr) {
+    const uint32_t address = uint32_t(strtoul(c, nullptr, 16));
+    std::thread([this, address] {
+      auto* word = memory_->TranslateVirtual<volatile uint32_t*>(address);
+      uint32_t last = 0;
+      bool armed = false;
+      int last_state = -1;
+      for (;;) {
+        if (auto* wheap = memory_->LookupHeap(address)) {
+          const int st = wheap->IsRangeUnallocated(address & ~0xFFFu, 0x1000) ? 1 : 0;
+          if (st != last_state) {
+            XELOGE("WATCH heap state of page {:08X}: unallocated={}", address & ~0xFFFu, st);
+            last_state = st;
+          }
+        }
+        const uint32_t now = *word;
+        if (!armed && now) {
+          armed = true;
+          last = now;
+          XELOGE("WATCH armed {:08X} = {:08X}", address, now);
+        } else if (armed && now != last) {
+          XELOGE("WATCH {:08X} changed {:08X} -> {:08X}", address, last, now);
+          last = now;
+        }
+        std::this_thread::sleep_for(std::chrono::microseconds(50));
+      }
+    }).detach();
+    }
+  }
 
   // Expose the HDD content partition. Games that resolve saves/DLC to a raw
   // \Device\Harddisk0\Partition1\Content path via XamContentResolve open it
@@ -2739,7 +2850,17 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
     // XamInputGetState looks the device up in slot 0, or slot 3 when the caller
     // asks for keystroke mode (flag 8), which is what the dashboard's menus use.
     // So the kernel connects the pad for both port types.
-    for (const uint64_t port_type : {0, 3}) {
+    // TEMP-DIAG WHARF_PAD_PORT_TYPES="0,3" (default): which port types the
+    // connect callback binds; the type 0 and type 3 keystroke paths each
+    // generate a keystroke per press when both are bound.
+    std::vector<uint64_t> port_types = {0, 3};
+    if (const char* spec = getenv("WHARF_PAD_PORT_TYPES")) {
+      port_types.clear();
+      for (const char* p = spec; *p; ++p) {
+        if (*p >= '0' && *p <= '7') port_types.push_back(uint64_t(*p - '0'));
+      }
+    }
+    for (const uint64_t port_type : port_types) {
       if (!binding) {
         break;
       }
@@ -2747,7 +2868,11 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
           kernel_state(), 0x40000, 0, binding, 1, 0, true, false,
           kernel_state()->GetSystemProcess()));
       connect->set_name("real xam connect");
-      connect->SetExtraStartArgs({0x40000001, port_type, 0, 0});
+      // TEMP-DIAG: type 3 gets device id 0x43000001 so the pad-file hook can
+      // feed buttons to the keystroke path (type 3) and triggers to the full
+      // path (type 0) without doubling every press.
+      connect->SetExtraStartArgs(
+          {port_type == 3 ? 0x43000001u : 0x40000001u, port_type, 0, 0});
       if (XSUCCEEDED(connect->Create())) {
         uint64_t connect_timeout = static_cast<uint64_t>(-10 * 10000000LL);
         connect->Wait(0, 0, 0, &connect_timeout);

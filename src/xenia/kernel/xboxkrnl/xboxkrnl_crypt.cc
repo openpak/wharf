@@ -622,6 +622,7 @@ DECLARE_XBOXKRNL_EXPORT1(XeCryptBnDwLePkcs1Verify, kNone, kStub);
 // Real random bytes: XAM draws values until one is not taken (ports, ids) and
 // spins forever on a constant.
 void XeCryptRandom_entry(lpvoid_t buf, dword_t buf_size) {
+  if (getenv("WHARF_RAND0")) { std::memset(buf, 0xFD, buf_size); return; }  // TEMP-DIAG
   static std::mutex mutex;
   static std::mt19937 rng{std::random_device{}()};
   std::lock_guard<std::mutex> lock(mutex);
@@ -677,6 +678,10 @@ void XeCryptDes3Cbc_entry(pointer_t<XECRYPT_DES3_STATE> state_ptr, lpvoid_t inp,
   // DES can only do 8-byte chunks at a time!
   assert_true(inp_size % 8 == 0);
 
+  if (encrypt && getenv("WHARF_CRYPTLOG") && inp_size <= 0x80) {  // TEMP-DIAG: plaintext of small outgoing secure-channel messages
+    auto hex = [](const uint8_t* p, uint32_t n) { std::string h; for (uint32_t i = 0; p && i < n; ++i) h += fmt::format("{:02x}", p[i]); return h; };
+    XELOGE("CRYPTLOG Des3Cbc encrypt plaintext={}", hex(inp.as<uint8_t*>(), inp_size));
+  }
   XeCryptDes3Cbc(state_ptr, inp.as<uint8_t*>(), inp_size, out.as<uint8_t*>(),
                  feed.as<uint8_t*>(), encrypt != 0);
 }

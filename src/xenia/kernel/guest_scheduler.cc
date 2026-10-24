@@ -9,6 +9,7 @@
 
 #include "xenia/kernel/guest_scheduler.h"
 
+#include <unistd.h>
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -1892,6 +1893,34 @@ void GuestScheduler::WatchdogLoop() {
     // No-progress detection, outside lock_ (ReportNoProgress takes it).
     // Only meaningful once something has been dispatched, so a title still
     // loading is not reported.
+    {  // TEMP-DIAG: touch the file named by WHARF_DUMPFILE to get a thread dump.
+      static const char* dump_file = getenv("WHARF_DUMPFILE");
+      if (dump_file && access(dump_file, F_OK) == 0) {
+        unlink(dump_file);
+        ReportNoProgress();
+      }
+    }
+    {  // TEMP-DIAG: WHARF_MEMDUMP file holding "0xADDR 0xLEN" -> hex dump of guest memory to the log.
+      static const char* mem_file = getenv("WHARF_MEMDUMP");
+      if (mem_file && access(mem_file, F_OK) == 0) {
+        unsigned addr = 0, len = 0;
+        if (FILE* f = fopen(mem_file, "r")) {
+          if (fscanf(f, "%x %x", &addr, &len) != 2) len = 0;
+          fclose(f);
+        }
+        unlink(mem_file);
+        if (len && len <= 0x4000) {
+          auto* p = kernel_state_->memory()->TranslateVirtual<uint8_t*>(addr);
+          for (unsigned o = 0; o < len; o += 16) {
+            char line[80];
+            int n = snprintf(line, sizeof(line), "%08X:", addr + o);
+            for (unsigned i = 0; i < 16 && o + i < len; ++i)
+              n += snprintf(line + n, sizeof(line) - n, " %02X", p[o + i]);
+            XELOGW("MEMDUMP {}", line);
+          }
+        }
+      }
+    }
     uint32_t frame = xe::logging::GetFrameNumber();
     if (frame != last_frame_number_ || !dispatched_any_.load()) {
       last_frame_number_ = frame;

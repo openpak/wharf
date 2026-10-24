@@ -94,12 +94,17 @@ dword_result_t XexGetModuleSection_entry(lpvoid_t hmodule, lpstring_t name,
     uint32_t section_data = 0;
     uint32_t section_size = 0;
     result = module->GetSection(name.value(), &section_data, &section_size);
+    XELOGE("SECDIAG XexGetModuleSection({:08X} '{}', '{}') = {:08X}",
+           uint32_t(hmodule.guest_address()), module->name(), name.value(),
+           uint32_t(result));  // TEMP-DIAG
     if (XSUCCEEDED(result)) {
       *data_ptr = section_data;
       *size_ptr = section_size;
     }
   } else {
     result = X_STATUS_INVALID_HANDLE;
+    XELOGE("SECDIAG XexGetModuleSection({:08X}, '{}') invalid handle",
+           uint32_t(hmodule.guest_address()), name.value());  // TEMP-DIAG
   }
 
   return result;
@@ -177,6 +182,9 @@ dword_result_t xeXexLoadImage(
 
   *hmodule_ptr = hmodule;
 
+  XELOGE("LOADDIAG XexLoadImage('{}', flags {:08X}, minver {:08X}) = {:08X} hmodule {:08X}",
+         module_name.value(), uint32_t(module_flags), uint32_t(min_version),
+         uint32_t(result), hmodule);  // TEMP-DIAG
   return result;
 }
 

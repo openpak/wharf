@@ -7,6 +7,8 @@
  ******************************************************************************
  */
 
+#include <atomic>
+#include <set>
 #include "xenia/kernel/xboxkrnl/xboxkrnl_threading.h"
 
 #include <algorithm>
@@ -1137,6 +1139,10 @@ dword_result_t KeWaitForMultipleObjects_entry(
       auto object_ref = XObject::GetNativeObject<XObject>(
           kernel_state(), object_ptr, UndefinedObject, true);
       if (!object_ref) {
+        static std::set<uint32_t> logged;  // TEMP-DIAG
+        if (logged.insert(objects_ptr[n]).second) {
+          XELOGW("KeWaitForMultipleObjects: object {}/{} at {:08X} type byte {} not waitable", n, uint32_t(count), uint32_t(objects_ptr[n]), *reinterpret_cast<uint8_t*>(object_ptr));
+        }
         return X_STATUS_INVALID_PARAMETER;
       }
 
@@ -1147,6 +1153,17 @@ dword_result_t KeWaitForMultipleObjects_entry(
   X_STATUS result = XObject::WaitMultiple(
       uint32_t(count), reinterpret_cast<XObject**>(&objects[0]), wait_type,
       wait_reason, processor_mode, alertable, timeout_ptr ? &timeout : nullptr);
+  {  // TEMP-DIAG: XAM's dispatcher thread (many objects)
+    static std::atomic<int> logged{0};
+    if (count >= 3 && logged.fetch_add(1) < 40) {
+      std::string o;
+      for (uint32_t n = 0; n < count; n++) {
+        const auto* h = kernel_memory()->TranslateVirtual<const uint8_t*>(objects_ptr[n]);
+        o += fmt::format(" {:08X}[t{} sig{}]", uint32_t(objects_ptr[n]), h[0], int32_t(xe::load_and_swap<uint32_t>(h + 4)));
+      }
+      XELOGI("KeWaitMulti count {} type {} timeout {} -> {:08X}:{}", uint32_t(count), uint32_t(wait_type), timeout_ptr ? int64_t(timeout) : 0, uint32_t(result), o);
+    }
+  }
   if (alertable) {
     if (result == X_STATUS_USER_APC) {
       xeProcessUserApcs(nullptr);
