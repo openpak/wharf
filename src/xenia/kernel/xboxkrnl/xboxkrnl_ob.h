@@ -20,6 +20,7 @@ using PPCContext = xe::cpu::ppc::PPCContext;
 
 namespace xe {
 namespace kernel {
+class XObject;
 namespace xboxkrnl {
 
 void xeObDereferenceObject(PPCContext* context, uint32_t native_ptr);
@@ -32,6 +33,9 @@ uint32_t xeObCreateObject(X_OBJECT_TYPE* object_factory,
                           X_OBJECT_ATTRIBUTES* optional_attributes,
                           uint32_t object_size_sans_headers,
                           uint32_t* out_object, cpu::ppc::PPCContext* context);
+// Guest address of the dispatcher object a wait on |object| takes, when it is
+// an object of a type the title defines (XAM's notification listener); 0 else.
+uint32_t xeObGuestWaitableAddress(XObject* object);
 // Drops a leading \??\, the DOS devices directory the ObDosDevices root also
 // names, so \??\game:\file is game:\file.
 void xeObStripDosDevicesPrefix(std::string& path);

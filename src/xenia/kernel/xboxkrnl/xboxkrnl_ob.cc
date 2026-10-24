@@ -656,6 +656,62 @@ dword_result_t ObInsertObject_entry(dword_t object,
 }
 DECLARE_XBOXKRNL_EXPORT1(ObInsertObject, kNone, kSketchy);
 
+// The dispatcher object a wait takes for this object body. A body that starts
+// with a dispatcher header (every type Edge creates) is its own; a guest
+// object type (XAM's notification listener) names the embedded one through the
+// type's DefaultObject: a small value is an offset into the body, a larger one
+// the address of a fixed object.
+uint32_t xeObGuestWaitableAddress(XObject* object) {
+  auto* guest_object = dynamic_cast<XGuestObject*>(object);
+  if (!guest_object) {
+    return 0;
+  }
+  const uint32_t body = guest_object->body();
+  auto* memory = kernel_memory();
+  auto* object_header = memory->TranslateVirtual<const X_OBJECT_HEADER*>(
+      body - uint32_t(sizeof(X_OBJECT_HEADER)));
+  if (!object_header->object_type_ptr) {
+    return 0;
+  }
+  const uint32_t default_object =
+      memory->TranslateVirtual<const X_OBJECT_TYPE*>(
+              object_header->object_type_ptr)
+          ->unknown_size_or_object_;
+  if (!default_object) {
+    return 0;
+  }
+  return default_object < 0x10000 ? body + default_object : default_object;
+}
+
+dword_result_t ObGetWaitableObject_entry(dword_t object) {
+  if (!object) {
+    return 0;
+  }
+  auto* memory = kernel_memory();
+  const uint8_t header_type = *memory->TranslateVirtual<const uint8_t*>(object);
+  if (header_type <= static_cast<uint8_t>(X_OBJECT_TYPES::SemaphoreObject) ||
+      header_type == static_cast<uint8_t>(X_OBJECT_TYPES::ThreadObject) ||
+      header_type == static_cast<uint8_t>(X_OBJECT_TYPES::TimerNotificationObject) ||
+      header_type == static_cast<uint8_t>(X_OBJECT_TYPES::TimerSynchronizationObject)) {
+    return object.value();
+  }
+  auto* object_header = memory->TranslateVirtual<const X_OBJECT_HEADER*>(
+      object - uint32_t(sizeof(X_OBJECT_HEADER)));
+  if (!object_header->object_type_ptr) {
+    return object.value();
+  }
+  const uint32_t default_object =
+      memory->TranslateVirtual<const X_OBJECT_TYPE*>(
+              object_header->object_type_ptr)
+          ->unknown_size_or_object_;
+  if (!default_object) {
+    return object.value();
+  }
+  return default_object < 0x10000 ? object.value() + default_object
+                                  : default_object;
+}
+DECLARE_XBOXKRNL_EXPORT1(ObGetWaitableObject, kNone, kSketchy);
+
 }  // namespace xboxkrnl
 }  // namespace kernel
 }  // namespace xe

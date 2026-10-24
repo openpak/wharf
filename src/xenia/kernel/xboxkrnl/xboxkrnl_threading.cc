@@ -21,6 +21,7 @@
 #include "xenia/cpu/processor.h"
 #include "xenia/kernel/guest_scheduler.h"
 #include "xenia/kernel/util/shim_utils.h"
+#include "xenia/kernel/xboxkrnl/xboxkrnl_ob.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
 #include "xenia/kernel/xsemaphore.h"
 #include "xenia/kernel/xthread.h"
@@ -1081,6 +1082,16 @@ uint32_t NtWaitForSingleObjectEx(uint32_t object_handle, uint32_t wait_mode,
       kernel_state()->object_table()->LookupObject<XObject>(object_handle);
   if (object) {
     uint64_t timeout = timeout_ptr ? static_cast<uint64_t>(*timeout_ptr) : 0u;
+    // A guest-defined object type (XAM's notification listener) carries its
+    // dispatcher object inside the body; wait on that, not on nothing.
+    if (const uint32_t waitable = xeObGuestWaitableAddress(object.get())) {
+      auto inner = XObject::GetNativeObject<XObject>(
+          kernel_state(), kernel_memory()->TranslateVirtual(waitable),
+          UndefinedObject, true);
+      if (inner) {
+        object = inner;
+      }
+    }
     result =
         object->Wait(3, wait_mode, alertable, timeout_ptr ? &timeout : nullptr);
     if (alertable) {
