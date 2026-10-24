@@ -816,6 +816,14 @@ X_STATUS Emulator::LaunchXexFile(const std::filesystem::path& path) {
   // Get just the filename (foo.xex).
   auto file_name = path.filename();
 
+  // The real XAM loads huduiskin.xex and other system modules through
+  // \SystemRoot while it initialises, before CompleteLaunch returns, so the
+  // link has to exist first or the HUD scene is never built.
+  if (cvars::real_xam && !kernel_state_->title_mount_path_.empty()) {
+    file_system_->RegisterSymbolicLink("\\SystemRoot",
+                                       kernel_state_->title_mount_path_);
+  }
+
   // Launch the game.
   auto fs_path = fmt::format("{}\\", kDefaultGameSymbolicLink) +
                  xe::path_to_utf8(file_name);
@@ -2790,7 +2798,8 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
                  "info={:08X}", prior_state, prior_title, info_title);
         }
       }
-    }  }
+    }
+  }
 
   on_launch(title_id_.value(), title_name_);
 

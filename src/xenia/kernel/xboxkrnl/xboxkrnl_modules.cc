@@ -80,7 +80,16 @@ dword_result_t XexGetModuleSection_entry(lpvoid_t hmodule, lpstring_t name,
                                          lpdword_t size_ptr) {
   X_STATUS result = X_STATUS_SUCCESS;
 
-  auto module = XModule::GetFromHModule(kernel_state(), hmodule);
+  // The real XAM names a module it loaded by its kernel object handle here
+  // (0x01xxxxxx), not by the loader-entry pointer XexLoadImage returns.
+  object_ref<XModule> module;
+  if ((hmodule.guest_address() & 0xFF000000) == 0x01000000) {
+    module = kernel_state()->object_table()->LookupObject<XModule>(
+        hmodule.guest_address());
+  }
+  if (!module) {
+    module = XModule::GetFromHModule(kernel_state(), hmodule);
+  }
   if (module) {
     uint32_t section_data = 0;
     uint32_t section_size = 0;
@@ -195,6 +204,9 @@ dword_result_t XexLoadImageFromMemory_entry(lpdword_t buffer, dword_t size,
 }
 DECLARE_XBOXKRNL_EXPORT1(XexLoadImageFromMemory, kModules, kImplemented);
 
+// XexLoadExecutable(name, &module, flags, minimum version): the handle pointer
+// comes second, unlike XexLoadImage. Passing them in XexLoadImage's order wrote
+// the result through the flags value, over the running dashboard.
 dword_result_t XexLoadExecutable_entry(lpstring_t module_name,
                                        lpdword_t hmodule_ptr,
                                        dword_t module_flags,

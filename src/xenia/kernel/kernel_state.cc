@@ -715,6 +715,14 @@ object_ref<UserModule> KernelState::LoadUserModule(
     // guest-thread identity.
     module = object_ref<UserModule>(new UserModule(this));
     X_STATUS status = module->LoadFromFile(path);
+    if (XFAILED(status) && real_xam_module_ &&
+        !name.starts_with("$flash_")) {
+      // The system's flash modules sit in the package as $flash_<name>, which
+      // is how the real XAM and dashboard ask for e.g. hud.xex.
+      const auto flash_path = xe::utf8::join_guest_paths(
+          xe::utf8::find_base_guest_path(path), "$flash_" + std::string(name));
+      status = module->LoadFromFile(flash_path);
+    }
     if (XFAILED(status)) {
       object_table()->ReleaseHandle(module->handle());
       return nullptr;

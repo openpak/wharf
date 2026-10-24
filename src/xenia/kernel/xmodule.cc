@@ -42,6 +42,23 @@ XModule::~XModule() {
 }
 
 bool XModule::Matches(const std::string_view name) const {
+  // \SystemRoot\dash.xex names the same module as $flash_dash.xex.
+  if (name.find('\\') != std::string_view::npos ||
+      name.find('/') != std::string_view::npos) {
+    const std::string leaf = xe::utf8::find_name_from_guest_path(name);
+    if (!leaf.empty() && leaf != name &&
+        (xe::utf8::equal_case(xe::utf8::find_name_from_guest_path(path()),
+                              "$flash_" + leaf) ||
+         xe::utf8::equal_case(xe::utf8::find_name_from_guest_path(path()),
+                              leaf))) {
+      return true;
+    }
+  }
+  // A flash module loaded as $flash_<name> also answers to <name>.
+  if (xe::utf8::equal_case(xe::utf8::find_name_from_guest_path(path()),
+                           "$flash_" + std::string(name))) {
+    return true;
+  }
   return xe::utf8::equal_case(xe::utf8::find_name_from_guest_path(path()),
                               name) ||
          xe::utf8::equal_case(this->name(), name) ||

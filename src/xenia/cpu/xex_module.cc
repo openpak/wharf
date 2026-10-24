@@ -534,6 +534,20 @@ int XexModule::ReadImage(const void* xex_addr, size_t xex_length,
     return 0;
   }
 
+  // A resource-only XEX (huduiskin.xex and its kind: skin data for XAM, no
+  // code, no PE header) is a valid image; its resources are reached through
+  // XexGetModuleSection.
+  {
+    xex2_opt_resource_info* resources = nullptr;
+    // A title with resources still needs an executable image. In particular,
+    // a failed retail-key decrypt must retry the devkit key rather than load
+    // an encrypted homebrew title as a resource-only skin.
+    if (!is_executable() &&
+        GetOptHeader(XEX_HEADER_RESOURCE_INFO, &resources)) {
+      return 0;
+    }
+  }
+
   // Not a patch and image doesn't have proper PE header, return 3
   return 3;
 }
@@ -1027,6 +1041,13 @@ bool XexModule::LoadContinue() {
   }
 
   finished_load_ = true;
+
+  if (!is_valid_executable()) {
+    // Resource-only module: nothing to translate, import or protect.
+    low_address_ = 0;
+    high_address_ = 0;
+    return true;
+  }
 
   if (ReadPEHeaders()) {
     XELOGE("Failed to load XEX PE headers!");
