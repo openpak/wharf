@@ -59,6 +59,7 @@ namespace shaders {
 #include "xenia/gpu/shaders/bytecode/vulkan_spirv/apply_gamma_table_cs.h"
 #include "xenia/gpu/shaders/bytecode/vulkan_spirv/apply_gamma_table_fxaa_luma_cs.h"
 #include "xenia/gpu/shaders/bytecode/vulkan_spirv/fxaa_cs.h"
+#include "xenia/gpu/shaders/bytecode/vulkan_spirv/xam_overlay_composite_cs.h"
 #include "xenia/gpu/shaders/bytecode/vulkan_spirv/fxaa_extreme_cs.h"
 #include "xenia/gpu/shaders/bytecode/vulkan_spirv/resolve_downscale_cs.h"
 }  // namespace shaders
@@ -964,9 +965,10 @@ bool VulkanCommandProcessor::SetupContext() {
                                        .poolSizeCount++];
     swap_descriptor_pool_size_combined_image_sampler.type =
         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    // FXAA source and the XAM overlay source.
     swap_descriptor_pool_size_combined_image_sampler.descriptorCount =
-        kMaxFramesInFlight;
-    swap_descriptor_pool_create_info.maxSets += kMaxFramesInFlight;
+        kMaxFramesInFlight * 2;
+    swap_descriptor_pool_create_info.maxSets += kMaxFramesInFlight * 2;
   }
   if (dfn.vkCreateDescriptorPool(device, &swap_descriptor_pool_create_info,
                                  nullptr,
@@ -1022,6 +1024,14 @@ bool VulkanCommandProcessor::SetupContext() {
                                      &fxaa_source_descriptors_[i]) !=
         VK_SUCCESS) {
       XELOGE("Failed to allocate the FXAA source image descriptor sets");
+      return false;
+    }
+  }
+  for (uint32_t i = 0; i < kMaxFramesInFlight; ++i) {
+    if (dfn.vkAllocateDescriptorSets(device, &swap_descriptor_set_allocate_info,
+                                     &xam_overlay_descriptors_[i]) !=
+        VK_SUCCESS) {
+      XELOGE("Failed to allocate the XAM overlay source descriptor sets");
       return false;
     }
   }
@@ -1297,6 +1307,52 @@ bool VulkanCommandProcessor::SetupContext() {
     return false;
   }
 
+  // XAM overlay composite pipeline layout: the same sets as FXAA (destination
+  // storage image, source combined image sampler).
+  VkPushConstantRange xam_overlay_push_constant_range;
+  xam_overlay_push_constant_range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+  xam_overlay_push_constant_range.offset = 0;
+  xam_overlay_push_constant_range.size = sizeof(XamOverlayConstants);
+  VkPipelineLayoutCreateInfo xam_overlay_pipeline_layout_create_info;
+  xam_overlay_pipeline_layout_create_info.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  xam_overlay_pipeline_layout_create_info.pNext = nullptr;
+  xam_overlay_pipeline_layout_create_info.flags = 0;
+  xam_overlay_pipeline_layout_create_info.setLayoutCount =
+      uint32_t(fxaa_descriptor_set_layouts.size());
+  xam_overlay_pipeline_layout_create_info.pSetLayouts =
+      fxaa_descriptor_set_layouts.data();
+  xam_overlay_pipeline_layout_create_info.pushConstantRangeCount = 1;
+  xam_overlay_pipeline_layout_create_info.pPushConstantRanges =
+      &xam_overlay_push_constant_range;
+  if (dfn.vkCreatePipelineLayout(device,
+                                 &xam_overlay_pipeline_layout_create_info,
+                                 nullptr,
+                                 &xam_overlay_pipeline_layout_) != VK_SUCCESS) {
+    XELOGE("Failed to create the XAM overlay composite pipeline layout");
+    return false;
+  }
+  VkShaderModule xam_overlay_shader_module =
+      ui::vulkan::util::CreateShaderModule(
+          vulkan_device, shaders::xam_overlay_composite_cs,
+          sizeof(shaders::xam_overlay_composite_cs));
+  if (xam_overlay_shader_module == VK_NULL_HANDLE) {
+    XELOGE("Failed to create the XAM overlay composite shader module");
+    return false;
+  }
+  VkComputePipelineCreateInfo xam_overlay_pipeline_create_info =
+      fxaa_pipeline_create_info;
+  xam_overlay_pipeline_create_info.stage.module = xam_overlay_shader_module;
+  xam_overlay_pipeline_create_info.layout = xam_overlay_pipeline_layout_;
+  VkResult xam_overlay_pipeline_create_result = dfn.vkCreateComputePipelines(
+      device, VK_NULL_HANDLE, 1, &xam_overlay_pipeline_create_info, nullptr,
+      &xam_overlay_pipeline_);
+  dfn.vkDestroyShaderModule(device, xam_overlay_shader_module, nullptr);
+  if (xam_overlay_pipeline_create_result != VK_SUCCESS) {
+    XELOGE("Failed to create the XAM overlay composite pipeline");
+    return false;
+  }
+
   // Resolve downscale compute shader for scaled resolution readback.
   // Descriptor set layout: binding 0 = source storage buffer,
   //                        binding 1 = destination storage buffer.
@@ -1459,6 +1515,12 @@ void VulkanCommandProcessor::ShutdownContext() {
       swap_apply_gamma_256_entry_table_fxaa_luma_pipeline_);
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipelineLayout, device,
                                          swap_apply_gamma_pipeline_layout_);
+
+  // XAM overlay composite cleanup.
+  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device,
+                                         xam_overlay_pipeline_);
+  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipelineLayout, device,
+                                         xam_overlay_pipeline_layout_);
 
   // FXAA cleanup.
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device,
@@ -2016,13 +2078,23 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     return;
   }
 
+  // XAM's system UI overlay for this frame, composited over the front buffer.
+  VkImageView xam_overlay_view = VK_NULL_HANDLE;
+  if (swap_xam_overlay_present_) {
+    uint32_t xam_overlay_width, xam_overlay_height;
+    xenos::TextureFormat xam_overlay_format;
+    xam_overlay_view = texture_cache_->RequestSwapTexture(
+        swap_xam_overlay_fetch_, xam_overlay_width, xam_overlay_height,
+        xam_overlay_format);
+  }
+
   auto aspect = graphics_system_->GetScaledAspectRatio();
 
   presenter->RefreshGuestOutput(
       frontbuffer_width_scaled, frontbuffer_height_scaled, aspect.first,
       aspect.second,
       [this, frontbuffer_width_scaled, frontbuffer_height_scaled,
-       frontbuffer_format, swap_texture_view](
+       frontbuffer_format, swap_texture_view, xam_overlay_view](
           ui::Presenter::GuestOutputRefreshContext& context) -> bool {
         // In case the swap command is the only one in the frame.
         if (!BeginSubmission(true)) {
@@ -2548,6 +2620,80 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
               fxaa_descriptor_sets.data(), 0, nullptr);
 
           // Dispatch FXAA compute shader.
+          ++submission_in_progress_.dispatch_count;
+          deferred_command_buffer_.CmdVkDispatch(group_count_x, group_count_y,
+                                                 1);
+
+          PopDebugMarker();
+        }
+
+        // Composite XAM's system UI overlay over the guest output.
+        if (xam_overlay_view != VK_NULL_HANDLE) {
+          PushDebugMarker("XAM overlay composite");
+
+          // The previous pass wrote the guest output; this one reads and
+          // writes it.
+          PushImageMemoryBarrier(
+              vulkan_context.image(),
+              ui::vulkan::util::InitializeSubresourceRange(),
+              VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+              VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+              VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+              VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
+          SubmitBarriers(true);
+
+          deferred_command_buffer_.CmdVkBindPipeline(
+              VK_PIPELINE_BIND_POINT_COMPUTE, xam_overlay_pipeline_);
+
+          // The destination descriptor set already names the guest output
+          // (written by the gamma or the FXAA pass above).
+          VkDescriptorSet xam_overlay_dest_descriptor =
+              swap_descriptors_dest_[swap_frame_index];
+          VkDescriptorSet xam_overlay_source_descriptor =
+              xam_overlay_descriptors_[swap_frame_index];
+          VkDescriptorImageInfo xam_overlay_source_image_info;
+          xam_overlay_source_image_info.sampler = fxaa_sampler_;
+          xam_overlay_source_image_info.imageView = xam_overlay_view;
+          xam_overlay_source_image_info.imageLayout =
+              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+          VkWriteDescriptorSet xam_overlay_source_write;
+          xam_overlay_source_write.sType =
+              VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+          xam_overlay_source_write.pNext = nullptr;
+          xam_overlay_source_write.dstSet = xam_overlay_source_descriptor;
+          xam_overlay_source_write.dstBinding = 0;
+          xam_overlay_source_write.dstArrayElement = 0;
+          xam_overlay_source_write.descriptorCount = 1;
+          xam_overlay_source_write.descriptorType =
+              VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+          xam_overlay_source_write.pImageInfo = &xam_overlay_source_image_info;
+          xam_overlay_source_write.pBufferInfo = nullptr;
+          xam_overlay_source_write.pTexelBufferView = nullptr;
+          dfn.vkUpdateDescriptorSets(device, 1, &xam_overlay_source_write, 0,
+                                     nullptr);
+
+          XamOverlayConstants xam_overlay_constants;
+          xam_overlay_constants.size[0] = frontbuffer_width_scaled;
+          xam_overlay_constants.size[1] = frontbuffer_height_scaled;
+          xam_overlay_constants.size_inv[0] =
+              1.0f / static_cast<float>(frontbuffer_width_scaled);
+          xam_overlay_constants.size_inv[1] =
+              1.0f / static_cast<float>(frontbuffer_height_scaled);
+          {  // TEMP-DIAG WHARF_OVERLAY_VIEW=1|2: show the overlay alone / its alpha
+            static const char* view = getenv("WHARF_OVERLAY_VIEW");
+            xam_overlay_constants.mode = view ? uint32_t(atoi(view)) : 0;
+          }
+          deferred_command_buffer_.CmdVkPushConstants(
+              xam_overlay_pipeline_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+              sizeof(xam_overlay_constants), &xam_overlay_constants);
+
+          std::array<VkDescriptorSet, 2> xam_overlay_descriptor_sets = {
+              xam_overlay_dest_descriptor, xam_overlay_source_descriptor};
+          deferred_command_buffer_.CmdVkBindDescriptorSets(
+              VK_PIPELINE_BIND_POINT_COMPUTE, xam_overlay_pipeline_layout_, 0,
+              uint32_t(xam_overlay_descriptor_sets.size()),
+              xam_overlay_descriptor_sets.data(), 0, nullptr);
+
           ++submission_in_progress_.dispatch_count;
           deferred_command_buffer_.CmdVkDispatch(group_count_x, group_count_y,
                                                  1);

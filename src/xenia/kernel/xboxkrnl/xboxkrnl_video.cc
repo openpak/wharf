@@ -7,6 +7,10 @@
  ******************************************************************************
  */
 
+#include <atomic>
+#include <chrono>
+#include <mutex>
+
 #include "xenia/kernel/xboxkrnl/xboxkrnl_video.h"
 
 #include "xenia/base/logging.h"
@@ -16,6 +20,7 @@
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_rtl.h"
+#include "xenia/kernel/xboxkrnl/xboxkrnl_threading.h"
 #include "xenia/xbox.h"
 
 DEFINE_int32(
@@ -103,6 +108,178 @@ static std::pair<uint32_t, uint32_t> CalculateScaledAspectRatio(uint32_t fb_x,
 namespace xe {
 namespace kernel {
 namespace xboxkrnl {
+
+// XAM draws the system UI (HUD, Guide, sign-in and the other UI modules) with
+// its own Direct3D device into a command buffer in physical memory and hands
+// each finished frame to the kernel with VdSetSystemCommandBuffer. The 0x90-byte
+// descriptor names the buffer (physical address, dword count), the overlay
+// texture the buffer resolves into (base address as stored in the D3D texture
+// header, that is in one of the physical views; format; size) and the
+// rectangles to composite it with. The kernel runs the buffer on the GPU with
+// the title's next swap and composites the overlay over the front buffer;
+// VdQuerySystemCommandBuffer tells XAM when the last submission has been taken
+// so that it may record the next frame.
+struct XamSystemCommandBuffer {
+  uint32_t command_physical_address;
+  uint32_t command_dword_count;
+  uint32_t overlay_virtual_address;
+  uint32_t overlay_format;
+  uint32_t overlay_width;
+  uint32_t overlay_height;
+  int64_t submit_time_us;
+  bool pending;  // submitted and not yet executed by a swap
+};
+static std::mutex xam_system_command_buffer_mutex;
+static XamSystemCommandBuffer xam_system_command_buffer = {};
+
+static int64_t SystemCommandBufferNowUs() {
+  return std::chrono::duration_cast<std::chrono::microseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
+dword_result_t VdSetSystemCommandBuffer_entry(lpvoid_t descriptor_ptr) {
+  std::lock_guard<std::mutex> lock(xam_system_command_buffer_mutex);
+  auto& buffer = xam_system_command_buffer;
+  const xe::be<uint32_t>* descriptor =
+      descriptor_ptr ? descriptor_ptr.as_array<uint32_t>() : nullptr;
+  if (!descriptor || !descriptor[0] || !descriptor[1]) {
+    buffer.pending = false;
+    return 0;
+  }
+  buffer.command_physical_address = descriptor[0];
+  buffer.command_dword_count = descriptor[1] & 0xFFFFFF;
+  buffer.overlay_virtual_address = descriptor[2];
+  buffer.overlay_format = descriptor[3];
+  buffer.overlay_width = descriptor[5];
+  buffer.overlay_height = descriptor[6];
+  buffer.submit_time_us = SystemCommandBufferNowUs();
+  buffer.pending = true;
+  {  // TEMP-DIAG: the first submissions and the head/tail of their packets
+    static int logged = 0;
+    if (logged < 4 || (logged < 40 && (logged % 8) == 0)) {
+      std::string d;
+      for (int i = 0; i < 37; ++i) {
+        d += fmt::format("{:08X}{}", uint32_t(descriptor[i]),
+                         (i % 8 == 7) ? "\n    " : " ");
+      }
+      const auto* p = kernel_memory()->TranslatePhysical<const xe::be<uint32_t>*>(
+          buffer.command_physical_address);
+      std::string head, tail;
+      for (int i = 0; i < 24; ++i) head += fmt::format("{:08X} ", uint32_t(p[i]));
+      const uint32_t n = buffer.command_dword_count;
+      for (int i = int(n) - 8; i < int(n) + 4; ++i) {
+        if (i >= 0) tail += fmt::format("{:08X} ", uint32_t(p[i]));
+      }
+      XELOGE("SYSCB #{} descriptor:\n    {}\n  head: {}\n  tail: {}", logged, d,
+             head, tail);
+    }
+    ++logged;
+  }
+  {  // TEMP-DIAG: XAM UI / input focus state words, now and then
+    static uint32_t n = 0;
+    if ((n++ % 600) == 300) {
+      std::string d;
+      for (uint32_t g : {0x81AAC2A0u, 0x81AAC2A4u, 0x81AAC2A8u, 0x81AAC2ACu,
+                         0x81AA20E0u, 0x81AA2118u, 0x81AA2188u, 0x81AA2124u,
+                         0x81AA212Cu, 0x81AAC3C3u}) {
+        d += fmt::format(" [{:08X}]={:08X}", g,
+                         xe::load_and_swap<uint32_t>(
+                             kernel_memory()->TranslateVirtual(g)));
+      }
+      XELOGE("XAMUI state{}", d);
+    }
+  }
+  {  // TEMP-DIAG WHARF_SYSCB_DUMP=<dir>: raw dumps of a few submissions
+    static const char* dir = getenv("WHARF_SYSCB_DUMP");
+    static uint32_t n = 0, last_count = 0, dumps = 0;
+    const uint32_t i = n++;
+    const int32_t delta =
+        int32_t(buffer.command_dword_count) - int32_t(last_count);
+    const bool changed = delta > 100 || delta < -100;
+    if (dir && dumps < 24 && (i == 60 || i == 600 || changed)) {
+      last_count = buffer.command_dword_count;
+      std::string path = fmt::format("{}/syscb_{:05}_{}.bin", dir, i,
+                                     buffer.command_dword_count);
+      if (FILE* f = fopen(path.c_str(), "wb")) {
+        fwrite(kernel_memory()->TranslatePhysical(
+                   buffer.command_physical_address),
+               4, buffer.command_dword_count + 16, f);
+        fclose(f);
+        ++dumps;
+      }
+      // The icon textures the legend draws name (1F9Fx000 / 1E00x000 pages).
+      for (uint32_t base : {0x1F9F0000u, 0x1E000000u}) {
+        std::string tex = fmt::format("{}/tex_{:05}_{:08X}.bin", dir, i, base);
+        if (FILE* f = fopen(tex.c_str(), "wb")) {
+          fwrite(kernel_memory()->TranslatePhysical(base), 1, 0x10000, f);
+          fclose(f);
+        }
+      }
+      XELOGE("SYSCB dump #{} count {} (delta {})", i,
+             buffer.command_dword_count, delta);
+      if (dumps == 1) {  // the shaders and vertex buffers XAM's packets name
+        std::string mem = fmt::format("{}/mem_1FC80000.bin", dir);
+        if (FILE* f = fopen(mem.c_str(), "wb")) {
+          fwrite(kernel_memory()->TranslatePhysical(0x1FC80000), 1, 0x40000, f);
+          fclose(f);
+        }
+      }
+    }
+    {  // the descriptor's mode word and rect words, whenever they change
+      static uint32_t last[40] = {};
+      bool rect_changed = false;
+      for (int k = 4; k < 37; ++k) {
+        if (k == 5 || k == 6) continue;
+        if (uint32_t(descriptor[k]) != last[k]) rect_changed = true;
+        last[k] = descriptor[k];
+      }
+      if (rect_changed) {
+        std::string d;
+        for (int k = 4; k < 37; ++k) {
+          d += fmt::format("{}{:08X}", (k == 8 || k == 22) ? " | " : " ",
+                           uint32_t(descriptor[k]));
+        }
+        XELOGE("SYSCB #{} rects changed:{}", i, d);
+      }
+    }
+  }
+  return 0;
+}
+DECLARE_XBOXKRNL_EXPORT1(VdSetSystemCommandBuffer, kVideo, kImplemented);
+
+dword_result_t VdQuerySystemCommandBuffer_entry(const ppc_context_t& context) {
+  bool pending;
+  int64_t age_us;
+  {
+    std::lock_guard<std::mutex> lock(xam_system_command_buffer_mutex);
+    pending = xam_system_command_buffer.pending;
+    age_us = SystemCommandBufferNowUs() -
+             xam_system_command_buffer.submit_time_us;
+  }
+  // Without a title swap to carry the buffer (nothing presenting yet), count
+  // it as taken after a few frames so that XAM's UI loop keeps running.
+  if (!pending || age_us > 50000) {
+    return 1;
+  }
+  // XAM's UI loop polls this without waiting itself, so sleep a millisecond
+  // instead of burning a core on it.
+  uint64_t interval = uint64_t(-10000);
+  KeDelayExecutionThread(0, 0, &interval, context);
+  return 0;
+}
+DECLARE_XBOXKRNL_EXPORT1(VdQuerySystemCommandBuffer, kVideo, kImplemented);
+
+// Takes the pending XAM submission, if any, for the swap that executes it.
+static bool TakeXamSystemCommandBuffer(XamSystemCommandBuffer* out) {
+  std::lock_guard<std::mutex> lock(xam_system_command_buffer_mutex);
+  if (!xam_system_command_buffer.pending) {
+    return false;
+  }
+  *out = xam_system_command_buffer;
+  xam_system_command_buffer.pending = false;
+  return true;
+}
 
 // https://web.archive.org/web/20150805074003/https://www.tweakoz.com/orkid/
 // http://www.tweakoz.com/orkid/dox/d3/d52/xb360init_8cpp_source.html
@@ -478,6 +655,60 @@ void VdSwap_entry(
            frontbuffer_virtual_address);
     return;
   }
+  uint32_t swap_width = *width;
+  uint32_t swap_height = *height;
+
+  {  // TEMP-DIAG: XAM UI readiness / focus words, from the title's swap
+    static uint32_t n = 0;
+    if ((n++ % 600) == 200) {
+      std::string d;
+      for (uint32_t g : {0x81AA2190u, 0x81AA2194u, 0x81AA21BCu, 0x81AA2188u,
+                         0x81AA2118u, 0x81AA20E0u, 0x81AA2124u, 0x81AA2120u,
+                         0x81AAC2A0u, 0x81AA2160u}) {
+        d += fmt::format(" [{:08X}]={:08X}", g,
+                         xe::load_and_swap<uint32_t>(
+                             kernel_memory()->TranslateVirtual(g)));
+      }
+      XELOGE("XAMUI swap-state{}", d);
+    }
+  }
+  // XAM's system command buffer for this frame (its UI, resolved into the
+  // overlay texture) runs on the GPU right before the swap, and the overlay
+  // of the latest submission is composited over the front buffer.
+  XamSystemCommandBuffer xam_buffer;
+  bool run_xam_buffer = TakeXamSystemCommandBuffer(&xam_buffer);
+  static XamSystemCommandBuffer last_xam_buffer = {};
+  if (run_xam_buffer) {
+    last_xam_buffer = xam_buffer;
+  }
+  {  // TEMP-DIAG: WHARF_NO_SYSCB=1 drops XAM's buffers, WHARF_NO_COMPOSITE=1
+     // runs them but presents the title frame alone
+    static const bool no_syscb = getenv("WHARF_NO_SYSCB") != nullptr;
+    static const bool no_composite = getenv("WHARF_NO_COMPOSITE") != nullptr;
+    if (no_syscb) run_xam_buffer = false;
+    if (no_syscb || no_composite) last_xam_buffer.overlay_virtual_address = 0;
+  }
+  // The overlay as a GPU fetch constant: the same layout as the title's front
+  // buffer (tiled 2D), with XAM's base, size and format. 0 when there is none.
+  xenos::xe_gpu_texture_fetch_t overlay_fetch = {};
+  if (last_xam_buffer.overlay_virtual_address) {
+    const uint32_t overlay_physical_address =
+        kernel_memory()->GetPhysicalAddress(
+            last_xam_buffer.overlay_virtual_address);
+    if (overlay_physical_address != UINT32_MAX) {
+      overlay_fetch = gpu_fetch;
+      overlay_fetch.base_address = overlay_physical_address >> 12;
+      overlay_fetch.format = static_cast<xenos::TextureFormat>(
+          last_xam_buffer.overlay_format & 0x3F);
+      overlay_fetch.size_2d.width = last_xam_buffer.overlay_width - 1;
+      overlay_fetch.size_2d.height = last_xam_buffer.overlay_height - 1;
+      overlay_fetch.pitch =
+          xe::round_up(last_xam_buffer.overlay_width, 32) / 32;
+      // ZYXW: the title's front buffer swizzle forces alpha to one, the
+      // overlay's alpha is what it is composited with.
+      overlay_fetch.swizzle = 2 | (1 << 3) | (0 << 6) | (3 << 9);
+    }
+  }
   gpu_fetch.base_address = frontbuffer_physical_address >> 12;
   XE_MAYBE_UNUSED
   auto texture_format = gpu::xenos::TextureFormat(texture_format_ptr.value());
@@ -499,6 +730,97 @@ void VdSwap_entry(
   uint32_t offset = 0;
   auto dwords = buffer_ptr.as_array<uint32_t>();
 
+  // XAM's buffer runs before the swap: it resolves into the overlay texture
+  // and may leave fetch constant 0 bound to its own textures, which the swap
+  // rewrites below.
+  if (run_xam_buffer) {
+    dwords[offset++] = xenos::MakePacketType3(xenos::PM4_INDIRECT_BUFFER, 2);
+    dwords[offset++] = xam_buffer.command_physical_address;
+    dwords[offset++] = xam_buffer.command_dword_count;
+
+    // Every XAM frame is self-contained: it redraws only the scene currently
+    // shown (a closed dialog is simply not drawn again, a frame without UI
+    // draws nothing) and never clears or repaints the EDRAM region of its
+    // render target (base 0, the overlay's size). On the console that region
+    // is scratch the title overwrites every frame, so nothing from an earlier
+    // XAM frame survives; here the dashboard renders elsewhere in EDRAM and
+    // the region would accumulate every frame ever drawn (stale dialogs and
+    // legends staying on screen). Leave it transparent for the next frame: a
+    // resolve of the region with the clear flag set, after XAM's frame. Its
+    // copy goes to a scratch buffer in a converted format, not the overlay:
+    // a second direct host resolve into the overlay with the clear left the
+    // texture cache showing a stale overlay.
+    static uint32_t clear_vertices = 0;  // physical, three (x, y) floats
+    static uint32_t clear_vertices_width = 0, clear_vertices_height = 0;
+    static uint32_t clear_copy_dest = 0;  // physical scratch, overlay-sized
+    static uint32_t clear_copy_dest_size = 0;
+    const uint32_t ow = xam_buffer.overlay_width;
+    const uint32_t oh = xam_buffer.overlay_height;
+    const uint32_t clear_copy_size =
+        xe::round_up(ow, 32) * xe::round_up(oh, 32) * 4;
+    if (!clear_vertices) {
+      clear_vertices = kernel_memory()->GetPhysicalAddress(
+          kernel_memory()->SystemHeapAlloc(32, 0x20, kSystemHeapPhysical));
+    }
+    if (clear_copy_dest_size < clear_copy_size) {
+      clear_copy_dest = kernel_memory()->GetPhysicalAddress(
+          kernel_memory()->SystemHeapAlloc(clear_copy_size, 0x1000,
+                                           kSystemHeapPhysical));
+      clear_copy_dest_size = clear_copy_dest ? clear_copy_size : 0;
+    }
+    if (clear_vertices &&
+        (clear_vertices_width != ow || clear_vertices_height != oh)) {
+      auto* v = kernel_memory()->TranslatePhysical<xe::be<float>*>(
+          clear_vertices);
+      v[0] = 0.0f;
+      v[1] = 0.0f;
+      v[2] = float(ow);
+      v[3] = 0.0f;
+      v[4] = float(ow);
+      v[5] = float(oh);
+      clear_vertices_width = ow;
+      clear_vertices_height = oh;
+    }
+    // TEMP-DIAG WHARF_SYSCB_NO_CLEAR=1 keeps the canvas (shows the ghosts)
+    static const bool clear_enabled =
+        getenv("WHARF_SYSCB_NO_CLEAR") == nullptr;
+    if (clear_enabled && clear_vertices && clear_copy_dest &&
+        overlay_fetch.base_address) {
+      dwords[offset++] =
+          xenos::MakePacketType0(gpu::XE_GPU_REG_PA_SC_WINDOW_OFFSET, 3);
+      dwords[offset++] = 0;
+      dwords[offset++] = 0;
+      dwords[offset++] = (oh << 16) | ow;
+      dwords[offset++] =
+          xenos::MakePacketType0(gpu::XE_GPU_REG_RB_SURFACE_INFO, 2);
+      dwords[offset++] = xe::round_up(ow, 80);  // EDRAM tile width
+      dwords[offset++] = 0;                      // base 0, k_8_8_8_8
+      dwords[offset++] =
+          xenos::MakePacketType0(gpu::XE_GPU_REG_RB_COLOR_CLEAR, 2);
+      dwords[offset++] = 0;
+      dwords[offset++] = 0;
+      dwords[offset++] =
+          xenos::MakePacketType0(gpu::XE_GPU_REG_RB_COPY_CONTROL, 4);
+      dwords[offset++] = (1 << 20) | (1 << 8);  // convert, clear colour
+      dwords[offset++] = clear_copy_dest;
+      dwords[offset++] = (oh << 16) | xe::round_up(ow, 32);
+      dwords[offset++] =
+          (1 << 24) | (uint32_t(xenos::ColorFormat::k_2_10_10_10) << 7);
+      dwords[offset++] =
+          xenos::MakePacketType0(gpu::XE_GPU_REG_RB_MODECONTROL, 1);
+      dwords[offset++] = uint32_t(xenos::EdramMode::kCopy);
+      dwords[offset++] = xenos::MakePacketType0(
+          gpu::XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0, 2);
+      dwords[offset++] = clear_vertices | 3;  // vertex fetch
+      dwords[offset++] = (6 << 2) | 2;        // six words, 8in32
+      dwords[offset++] = xenos::MakePacketType3(xenos::PM4_DRAW_INDX_2, 1);
+      dwords[offset++] = (3 << 16) | (2 << 6) | 8;  // 3 vertices, rectangle
+      dwords[offset++] =
+          xenos::MakePacketType0(gpu::XE_GPU_REG_RB_MODECONTROL, 1);
+      dwords[offset++] = uint32_t(xenos::EdramMode::kColorDepth);
+    }
+  }
+
   // Write in the GPU texture fetch.
   dwords[offset++] =
       xenos::MakePacketType0(gpu::XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0, 6);
@@ -509,12 +831,23 @@ void VdSwap_entry(
   dwords[offset++] = gpu_fetch.dword_4;
   dwords[offset++] = gpu_fetch.dword_5;
 
-  dwords[offset++] = xenos::MakePacketType3(xenos::PM4_XE_SWAP, 4);
+  // With the overlay fetch constant appended when XAM has submitted a frame.
+  const bool has_overlay = overlay_fetch.base_address != 0;
+  dwords[offset++] =
+      xenos::MakePacketType3(xenos::PM4_XE_SWAP, has_overlay ? 10 : 4);
   dwords[offset++] = xe::gpu::xenos::kSwapSignature;
   dwords[offset++] = frontbuffer_physical_address;
 
-  dwords[offset++] = *width;
-  dwords[offset++] = *height;
+  dwords[offset++] = swap_width;
+  dwords[offset++] = swap_height;
+  if (has_overlay) {
+    dwords[offset++] = overlay_fetch.dword_0;
+    dwords[offset++] = overlay_fetch.dword_1;
+    dwords[offset++] = overlay_fetch.dword_2;
+    dwords[offset++] = overlay_fetch.dword_3;
+    dwords[offset++] = overlay_fetch.dword_4;
+    dwords[offset++] = overlay_fetch.dword_5;
+  }
 
   // Fill the rest of the buffer with NOP packets.
   for (uint32_t i = offset; i < 64; i++) {

@@ -797,7 +797,18 @@ bool COMMAND_PROCESSOR::ExecutePacketType3_XE_SWAP(uint32_t packet,
   uint32_t frontbuffer_ptr = reader_.ReadAndSwap<uint32_t>();
   uint32_t frontbuffer_width = reader_.ReadAndSwap<uint32_t>();
   uint32_t frontbuffer_height = reader_.ReadAndSwap<uint32_t>();
-  reader_.AdvanceRead((count - 4) * sizeof(uint32_t));
+  // Optional: the fetch constant of XAM's system UI overlay for this frame.
+  uint32_t consumed = 4;
+  swap_xam_overlay_present_ = count >= 10;
+  if (swap_xam_overlay_present_) {
+    uint32_t* overlay_dwords =
+        reinterpret_cast<uint32_t*>(&swap_xam_overlay_fetch_);
+    for (uint32_t i = 0; i < 6; ++i) {
+      overlay_dwords[i] = reader_.ReadAndSwap<uint32_t>();
+    }
+    consumed += 6;
+  }
+  reader_.AdvanceRead((count - consumed) * sizeof(uint32_t));
 
   if (COMMAND_PROCESSOR::debug_markers_enabled()) {
     COMMAND_PROCESSOR::InsertDebugMarker("PM4_XE_SWAP: 0x%08X %ux%u",
@@ -805,6 +816,24 @@ bool COMMAND_PROCESSOR::ExecutePacketType3_XE_SWAP(uint32_t packet,
                                          frontbuffer_height);
   }
 
+  {  // TEMP-DIAG: log frames whose draw set changes (a dialog opening shows up here)
+    std::string d = fmt::format("GPUDIAG swap {:08X} {}x{} draws={} rts:", frontbuffer_ptr,
+                                frontbuffer_width, frontbuffer_height, wharf_frame_draws_);
+    for (auto& e : wharf_frame_rts_) d += fmt::format(" {:08X}/{:08X}", e.first, e.second);
+    static std::string last;
+    static int same = 0;
+    std::string key = std::to_string(wharf_frame_draws_);
+    for (auto& e : wharf_frame_rts_) key += fmt::format(",{:X}/{:X}", e.first, e.second);
+    if (key != last) {
+      XELOGE("{} (after {} identical frames)", d, same);
+      last = key;
+      same = 0;
+    } else {
+      ++same;
+    }
+    wharf_frame_draws_ = 0;
+    wharf_frame_rts_.clear();
+  }
   COMMAND_PROCESSOR::IssueSwap(frontbuffer_ptr, frontbuffer_width,
                                frontbuffer_height);
 
@@ -1353,6 +1382,14 @@ bool COMMAND_PROCESSOR::ExecutePacketType3Draw(
         COMMAND_PROCESSOR::PushDebugMarker("%s", opcode_name);
       }
 
+      {  // TEMP-DIAG: per-frame draw count and the render targets drawn to
+        ++wharf_frame_draws_;
+        const uint32_t ci = register_file_->values[XE_GPU_REG_RB_COLOR_INFO];
+        const uint32_t si = register_file_->values[XE_GPU_REG_RB_SURFACE_INFO];
+        bool seen = false;
+        for (auto& e : wharf_frame_rts_) seen |= (e.first == ci && e.second == si);
+        if (!seen && wharf_frame_rts_.size() < 16) wharf_frame_rts_.emplace_back(ci, si);
+      }
       draw_succeeded = COMMAND_PROCESSOR::IssueDraw(
           vgt_draw_initiator.prim_type, vgt_draw_initiator.num_indices,
           is_indexed ? &index_buffer_info : nullptr,
