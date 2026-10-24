@@ -390,10 +390,13 @@ static const struct {
         0x0000000080000000ull,
     },
     //  (256mb) - xex 4k pages
+    // Own backing, not a mirror of the 64k view: the real XAM (0x815F0000) and
+    // the modules it loads at runtime (ximecore.xex at 0x91680000, hud.xex...)
+    // overlap their offsets, and would overwrite each other's code.
     {
         0x90000000,
         0x9FFFFFFF,
-        0x0000000080000000ull,
+        0x0000000090000000ull,
     },
     //  (512mb) - physical 64k pages
     {
@@ -907,6 +910,13 @@ bool Memory::AccessViolationCallback(
                                xe::memory::PageAccess::kReadWrite)) {
       // Under the global lock, so a plain counter is fine.
       static uint32_t backed_count = 0;
+      if (backed_count == 0) {  // TEMP-DIAG
+        for (int j = -4; j <= 4; ++j) {
+          const uint32_t b = (virtual_address & ~0xFFFFu) + j * 0x10000;
+          XELOGE("HEAPDIAG block {:08X} unallocated={} page_size={}", b,
+                 heap->IsRangeUnallocated(b, 0x10000), heap->page_size());
+        }
+      }
       if (xe::is_pow2(++backed_count)) {
         XELOGW(
             "Backed unallocated guest memory at {:08X} after an access "
@@ -2347,6 +2357,9 @@ bool BaseHeap::AllocSystemHeap(uint32_t size, uint32_t alignment,
 }
 
 bool BaseHeap::Decommit(uint32_t address, uint32_t size) {
+  if (address >= 0x90000000 && address < 0xA0000000) {  // TEMP-DIAG
+    XELOGE("HEAPDIAG Decommit {:08X} size {:X}", address, size);
+  }
   uint32_t page_count = get_page_count(size, page_size_);
   uint32_t start_page_number = (address - heap_base_) / page_size_;
   uint32_t end_page_number = start_page_number + page_count - 1;
@@ -2379,6 +2392,10 @@ bool BaseHeap::Decommit(uint32_t address, uint32_t size) {
 
 bool BaseHeap::Release(uint32_t base_address, uint32_t* out_region_size) {
   auto global_lock = global_critical_region_.Acquire();
+  if (base_address >= 0x90000000 && base_address < 0xA0000000) {  // TEMP-DIAG
+    XELOGE("HEAPDIAG Release {:08X} (heap_base {:08X})", base_address,
+           heap_base_);
+  }
 
   // Given address must be a region base address.
   uint32_t base_page_number = (base_address - heap_base_) / page_size_;
