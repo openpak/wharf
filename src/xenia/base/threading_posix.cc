@@ -618,6 +618,18 @@ class PosixConditionBase {
       bool all_locked = true;
 
       for (size_t i = 0; i < handles.size(); ++i) {
+        // The same handle listed twice owns one mutex, which is not
+        // recursive: locking it again fails forever.
+        bool listed_before = false;
+        for (size_t j = 0; j < i; ++j) {
+          if (handles[j] == handles[i]) {
+            listed_before = true;
+            break;
+          }
+        }
+        if (listed_before) {
+          continue;
+        }
 #if XE_PLATFORM_MAC
         // macOS: no robust mutex support.
         std::unique_lock<std::mutex> lk(handles[i]->mutex_, std::try_to_lock);
