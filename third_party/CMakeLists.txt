@@ -675,6 +675,36 @@ endif()
 target_include_directories(zlib-ng PUBLIC zlib-ng)
 
 # ==============================================================================
+# libslirp (BSD-3, Linux only): user-mode NAT behind the virtual Xbox 360 NIC.
+# Needs glib-2.0 from the system.
+# ==============================================================================
+if(UNIX AND NOT APPLE AND NOT ANDROID)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(GLIB2 REQUIRED IMPORTED_TARGET glib-2.0)
+  set(SLIRP_MAJOR_VERSION 4)
+  set(SLIRP_MINOR_VERSION 9)
+  set(SLIRP_MICRO_VERSION 1)
+  set(SLIRP_VERSION_STRING "\"4.9.1\"")
+  configure_file(libslirp/src/libslirp-version.h.in
+                 ${CMAKE_CURRENT_BINARY_DIR}/libslirp/libslirp-version.h @ONLY)
+  set(_slirp_dir libslirp/src)
+  add_library(slirp STATIC)
+  foreach(_f arp_table bootp cksum dhcpv6 dnssearch if ip6_icmp ip6_input
+             ip6_output ip_icmp ip_input ip_output mbuf misc ncsi ndp_table
+             sbuf slirp socket state stream tcp_input tcp_output tcp_subr
+             tcp_timer tftp udp udp6 util version vmstate)
+    target_sources(slirp PRIVATE ${_slirp_dir}/${_f}.c)
+  endforeach()
+  target_include_directories(slirp PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/${_slirp_dir}
+    ${CMAKE_CURRENT_BINARY_DIR}/libslirp)
+  target_compile_definitions(slirp PRIVATE
+    "G_LOG_DOMAIN=\"Slirp\"" BUILDING_LIBSLIRP)
+  target_link_libraries(slirp PUBLIC PkgConfig::GLIB2)
+  set_target_properties(slirp PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
+
+# ==============================================================================
 # libusb (Windows only)
 # ==============================================================================
 if(WIN32)
