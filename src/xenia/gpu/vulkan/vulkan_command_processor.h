@@ -904,6 +904,17 @@ class VulkanCommandProcessor final : public CommandProcessor {
   VkPipeline fxaa_extreme_pipeline_ = VK_NULL_HANDLE;
   VkSampler fxaa_sampler_ = VK_NULL_HANDLE;
 
+  // XAM's system UI overlay composited over the guest output at swap.
+  // set=0: destination storage image (the guest output), set=1: the overlay
+  // texture as a combined image sampler (linear, with the FXAA sampler).
+  struct XamOverlayConstants {
+    uint32_t size[2];
+    float size_inv[2];
+  };
+  VkPipelineLayout xam_overlay_pipeline_layout_ = VK_NULL_HANDLE;
+  VkPipeline xam_overlay_pipeline_ = VK_NULL_HANDLE;
+  std::array<VkDescriptorSet, kMaxFramesInFlight> xam_overlay_descriptors_;
+
   // Resolve downscale compute shader for scaled resolution readback.
   // Downscales scaled resolve buffer data back to 1x resolution on the GPU,
   // avoiding expensive CPU-side downscaling and reducing transfer bandwidth.

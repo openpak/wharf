@@ -797,7 +797,18 @@ bool COMMAND_PROCESSOR::ExecutePacketType3_XE_SWAP(uint32_t packet,
   uint32_t frontbuffer_ptr = reader_.ReadAndSwap<uint32_t>();
   uint32_t frontbuffer_width = reader_.ReadAndSwap<uint32_t>();
   uint32_t frontbuffer_height = reader_.ReadAndSwap<uint32_t>();
-  reader_.AdvanceRead((count - 4) * sizeof(uint32_t));
+  // Optional: the fetch constant of XAM's system UI overlay for this frame.
+  uint32_t consumed = 4;
+  swap_xam_overlay_present_ = count >= 10;
+  if (swap_xam_overlay_present_) {
+    uint32_t* overlay_dwords =
+        reinterpret_cast<uint32_t*>(&swap_xam_overlay_fetch_);
+    for (uint32_t i = 0; i < 6; ++i) {
+      overlay_dwords[i] = reader_.ReadAndSwap<uint32_t>();
+    }
+    consumed += 6;
+  }
+  reader_.AdvanceRead((count - consumed) * sizeof(uint32_t));
 
   if (COMMAND_PROCESSOR::debug_markers_enabled()) {
     COMMAND_PROCESSOR::InsertDebugMarker("PM4_XE_SWAP: 0x%08X %ux%u",

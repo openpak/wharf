@@ -1007,9 +1007,15 @@ uint64_t VulkanTextureCache::GetSubmissionToAwaitOnSamplerOverflow(
 VkImageView VulkanTextureCache::RequestSwapTexture(
     uint32_t& width_scaled_out, uint32_t& height_scaled_out,
     xenos::TextureFormat& format_out) {
-  SCOPE_profile_cpu_f("gpu");
   const auto& regs = register_file();
-  xenos::xe_gpu_texture_fetch_t fetch = regs.GetTextureFetch(0);
+  return RequestSwapTexture(regs.GetTextureFetch(0), width_scaled_out,
+                            height_scaled_out, format_out);
+}
+
+VkImageView VulkanTextureCache::RequestSwapTexture(
+    const xenos::xe_gpu_texture_fetch_t& fetch, uint32_t& width_scaled_out,
+    uint32_t& height_scaled_out, xenos::TextureFormat& format_out) {
+  SCOPE_profile_cpu_f("gpu");
   TextureKey key;
   BindingInfoFromFetchConstant(fetch, key, nullptr);
   if (!key.is_valid || key.base_page == 0 ||
