@@ -142,6 +142,12 @@ class VulkanTextureCache final : public TextureCache {
   VkImageView RequestSwapTexture(uint32_t& width_scaled_out,
                                  uint32_t& height_scaled_out,
                                  xenos::TextureFormat& format_out);
+  // The same for an explicit fetch constant (the system UI overlay XAM
+  // resolves into, composited over the front buffer at swap).
+  VkImageView RequestSwapTexture(const xenos::xe_gpu_texture_fetch_t& fetch,
+                                 uint32_t& width_scaled_out,
+                                 uint32_t& height_scaled_out,
+                                 xenos::TextureFormat& format_out);
 
   // Scaled resolve buffer management (for use by VulkanRenderTargetCache)
   // Simple non-overlapping buffer (fallback when sparse binding unavailable)

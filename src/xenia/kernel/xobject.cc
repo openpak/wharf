@@ -812,12 +812,16 @@ X_STATUS XObject::WaitMultiple(uint32_t count, XObject** objects,
       // record of what it blocks on. It also gates re-polling: only
       // Event/Semaphore/Mutant bump the signal epoch, so a set holding any
       // other type must stay ungated or its transitions wait for the backstop.
-      bool gateable_set = count <= 8;
+      // A timer expiry calls WakeCooperativeWaiters, so a set with one gates too;
+      // XAM's dispatcher thread waits on ~19 objects including a timer, and
+      // polled every pass it starved the lower-priority threads on its CPU.
+      bool gateable_set = count <= 64;
       for (size_t i = 0; gateable_set && i < count; ++i) {
         switch (objects[i]->type()) {
           case XObject::Type::Event:
           case XObject::Type::Semaphore:
           case XObject::Type::Mutant:
+          case XObject::Type::Timer:
             break;
           default:
             gateable_set = false;

@@ -738,6 +738,13 @@ class CommandProcessor {
   SwapPostEffect swap_post_effect_desired_ = SwapPostEffect::kNone;
   SwapPostEffect swap_post_effect_actual_ = SwapPostEffect::kNone;
 
+  // The system UI overlay XAM's system command buffer resolved into for the
+  // frame being swapped (fetch constant with the physical address), to be
+  // composited over the front buffer by the backend's IssueSwap. Set from the
+  // XE_SWAP packet; absent when the kernel has no XAM submission.
+  bool swap_xam_overlay_present_ = false;
+  xenos::xe_gpu_texture_fetch_t swap_xam_overlay_fetch_ = {};
+
   // Cached ZPD occlusion query mode (defaults to fake)
   ZPDMode cached_zpd_mode_ = ZPDMode::kFake;
 

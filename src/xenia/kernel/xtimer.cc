@@ -199,9 +199,9 @@ X_STATUS XTimer::SetTimer(int64_t due_time, uint32_t period_ms,
             routine, routine_arg, time_low, time_high);
         cb_thread->InsertOwnedApc(cb_apc, time_low, time_high);
       }
-      if (signal) {
-        WakeCooperativeWaiters();
-      }
+      // Also for a timer the guest drives only through its KTIMER: a wait set
+      // holding it is gated on this epoch.
+      WakeCooperativeWaiters();
     };
   }
 

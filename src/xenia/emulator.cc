@@ -2463,6 +2463,17 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
         }
       }
     }
+    // XAM's init stage ends by launching its own title (`bl 816A1238` at
+    // 8169678C), which runs on state only its engine thread builds and crashes
+    // a worker, leaving the lock the dashboard needs held. Wharf starts the
+    // dashboard itself, so that call becomes a nop.
+    {
+      auto* insn = memory()->TranslateVirtual<xe::be<uint32_t>*>(0x8169678C);
+      if ((static_cast<uint32_t>(*insn) & 0xFC000003u) == 0x48000001u) {
+        *insn = 0x60000000;  // nop
+        XELOGW("real_xam: XAM's own title launch at 8169678C patched out");
+      }
+    }
     const X_STATUS xam_result =
         kernel_state_->FinishLoadingUserModule(real_xam, false);
     if (XFAILED(xam_result)) {
@@ -2763,6 +2774,163 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
         }
       } else {
         XELOGW("real_xam: no title heap init at {:08X}", kXamTitleHeapInit);
+      }
+    }
+    // XAM's second init stage (816966F4) only runs with hardware flag 0x200 and
+    // needs the title-launch engine Wharf does not reproduce. Two of its steps
+    // are needed by system message 0x8000000D, which the dashboard triggers at
+    // its first input (816CAB08 dereferences their objects, null otherwise:
+    // crash in a worker thread). 816C9EA0 returns at once without the flag, so
+    // it runs with the flag set; 816CEBD8 creates the dispatch object.
+    {
+      auto run_xam_step = [&](uint32_t address, const char* name) {
+        auto step = kernel::object_ref<kernel::XThread>(new kernel::XThread(
+            kernel_state(), 0x40000, 0, address, 0, 0, true, false,
+            kernel_state()->GetSystemProcess()));
+        step->set_name(name);
+        if (XSUCCEEDED(step->Create())) {
+          uint64_t step_timeout = static_cast<uint64_t>(-10 * 10000000LL);
+          const X_STATUS step_wait = step->Wait(0, 0, 0, &step_timeout);
+          XELOGI("real_xam: {} finished with wait status {:08X}", name,
+                 step_wait);
+        }
+      };
+      // The kernel patched XAM's import slot with XboxHardwareInfo's address.
+      const uint32_t hardware_info =
+          *memory()->TranslateVirtual<const xe::be<uint32_t>*>(0x815F0480);
+      auto* flags = hardware_info
+                        ? memory()->TranslateVirtual<xe::be<uint32_t>*>(
+                              hardware_info)
+                        : nullptr;
+      if (flags) {
+        const uint32_t saved = *flags;
+        *flags = saved | 0x200;
+        run_xam_step(0x816C9EA0, "real xam step 816C9EA0");
+        *flags = saved;
+      }
+      run_xam_step(0x816CEBD8, "real xam step 816CEBD8");
+      // XAM's title loader (8169ED78, after XexLoadExecutable) records the
+      // executable it just started in the title-info block at XAM state
+      // +0x18/+0x1C..+0x40 (title id, version, game regions, media id, ...)
+      // with 8169BDD0(info, xex header base, version override, flags), reading
+      // the XEX header's execution info (0x40006). Wharf loads the dashboard
+      // itself and nops XAM's own launch (8169678C), so the block stayed zero;
+      // the XNetLogon start (81737888, parameter block = this title info,
+      // first dword title id) then fails 0x80150013 before any socket opens.
+      // This runs the same loader step for the already loaded executable.
+      const uint32_t state =
+          *memory()->TranslateVirtual<const xe::be<uint32_t>*>(0x81A9F850);
+      const uint32_t header = module->guest_xex_header();
+      if (state && header) {
+        auto title_info = kernel::object_ref<kernel::XThread>(
+            new kernel::XThread(kernel_state(), 0x40000, 0, 0x8169BDD0,
+                                state + 0x18, 0, true, false,
+                                kernel_state()->GetSystemProcess()));
+        title_info->set_name("real xam title info 8169BDD0");
+        title_info->SetExtraStartArgs({header, 0, 0});
+        if (XSUCCEEDED(title_info->Create())) {
+          uint64_t info_timeout = static_cast<uint64_t>(-10 * 10000000LL);
+          const X_STATUS info_wait =
+              title_info->Wait(0, 0, 0, &info_timeout);
+          const auto* block = memory()->TranslateVirtual<const xe::be<uint32_t>*>(
+              state + 0x18 + 0x1C);
+          XELOGI(
+              "real_xam: title info 8169BDD0 finished with wait status {:08X}: "
+              "[0]={:08X} [1]={:08X} [2]={:08X} [3]={:08X}",
+              info_wait, uint32_t(block[0]), uint32_t(block[1]),
+              uint32_t(block[2]), uint32_t(block[3]));
+        }
+      }
+      // XAM's title-launch engine broadcasts app message 0x80000002 ("title
+      // started") to every initialised app (816BD420, queued from 8169F348,
+      // before the title's entry point). For the xgi app (0xFB, object pointer
+      // at 81A96838) the handler is 81907C40: it records the running title id
+      // and sets the event (object+0x1F8) the Live logon's title sync (XMsg
+      // 0xB008B) waits on forever; without it every sign-in stalls on
+      // "Downloading your profile". That engine is not reproduced. The full
+      // broadcast was tried and is not reliable (another app's handler can spin
+      // inside it), so call just the xgi handler.
+      const uint32_t xgi =
+          *memory()->TranslateVirtual<const xe::be<uint32_t>*>(0x81A96838);
+      if (xgi) {
+        // The handler runs XAM code that reads its per-thread task context
+        // from the TLS slot (index at 81A82570): TLS -> {ptr} -> block with
+        // the current task object at +0xC (816B7FB0). XAM's own threads get
+        // it from their start routine (816B9668); a raw thread has none and
+        // faults on a null read. Give it an all-zero context.
+        auto start = kernel::object_ref<kernel::XThread>(new kernel::XThread(
+            kernel_state(), 0x40000, 0, 0x81907C40, xgi, 1, true, false,
+            kernel_state()->GetSystemProcess()));
+        start->set_name("real xam xgi title start 81907C40");
+        if (XSUCCEEDED(start->Create())) {
+          const uint32_t slot =
+              *memory()->TranslateVirtual<const xe::be<uint32_t>*>(0x81A82570);
+          const uint32_t block = memory()->SystemHeapAlloc(0x100);
+          if (block) {
+            std::memset(memory()->TranslateVirtual(block), 0, 0x100);
+            auto* words = memory()->TranslateVirtual<xe::be<uint32_t>*>(block);
+            words[0] = block + 0x10;                // TLS value -> {ptr}
+            words[(0x10 + 0xC) / 4] = block + 0x40;  // current task object
+            // The task object is ref-counted (+4; a release that reaches 0
+            // calls its null vtable) and carries the app id at +0x18
+            // (816B80C8 returns it as the current app).
+            words[(0x40 + 0x4) / 4] = 1;
+            words[(0x40 + 0x18) / 4] = 0xFB;
+            start->SetTLSValue(slot, block);
+          }
+          start->Resume();
+          uint64_t start_timeout = static_cast<uint64_t>(-10 * 10000000LL);
+          const X_STATUS start_wait = start->Wait(0, 0, 0, &start_timeout);
+          XELOGI("real_xam: xgi title start 81907C40 finished with wait status {:08X}",
+                 start_wait);
+        }
+      } else {
+        XELOGW("real_xam: no xgi app object at 81A96838");
+      }
+      // The token service (XMsg 0xFE/0x2F001, FUN_816C12A8) polls 816C0140, which
+      // returns "pending" until the event at 81A83018 is signalled. XAM signals it
+      // (profile interface method +0x20, 816DB6F8: KeSetEvent(81A83018)) at the end
+      // of the title-start auto-logon (816DD308, called from 8169F348), which Wharf
+      // does not run. Without it every REST/XSTS token request (profile data
+      // recovery, "Downloading your game info") stays pending without traffic.
+      auto token_event = kernel::object_ref<kernel::XThread>(
+          new kernel::XThread(kernel_state(), 0x40000, 0, 0x816DB6F8, 0, 0,
+                              true, false, kernel_state()->GetSystemProcess()));
+      token_event->set_name("real xam token event 816DB6F8");
+      if (XSUCCEEDED(token_event->Create())) {
+        uint64_t ev_timeout = static_cast<uint64_t>(-10 * 10000000LL);
+        const X_STATUS ev_wait = token_event->Wait(0, 0, 0, &ev_timeout);
+        XELOGI("real_xam: token event 816DB6F8 finished with wait status {:08X}",
+               ev_wait);
+      }
+      // The token service also requires the logon engine's title to equal the
+      // running title (816C0140 compares FUN_816E03B8 with FUN_81739668(0xC); the
+      // latter is 0 here, so it stays "pending"). XAM sets it with 81739568 (title
+      // id into the engine, flag 0x4000000) while starting a title's logon.
+      auto logon_title = kernel::object_ref<kernel::XThread>(
+          new kernel::XThread(kernel_state(), 0x40000, 0, 0x81739568,
+                              0xFFFE07D1, 1, true, false,
+                              kernel_state()->GetSystemProcess()));
+      logon_title->set_name("real xam logon title 81739568");
+      if (XSUCCEEDED(logon_title->Create())) {
+        // Same all-zero task context as the xgi start thread above.
+        const uint32_t slot =
+            *memory()->TranslateVirtual<const xe::be<uint32_t>*>(0x81A82570);
+        const uint32_t block = memory()->SystemHeapAlloc(0x100);
+        if (block) {
+          std::memset(memory()->TranslateVirtual(block), 0, 0x100);
+          auto* words = memory()->TranslateVirtual<xe::be<uint32_t>*>(block);
+          words[0] = block + 0x10;
+          words[(0x10 + 0xC) / 4] = block + 0x40;
+          words[(0x40 + 0x4) / 4] = 1;
+          words[(0x40 + 0x18) / 4] = 0xFB;
+          logon_title->SetTLSValue(slot, block);
+        }
+        logon_title->Resume();
+        uint64_t lt_timeout = static_cast<uint64_t>(-10 * 10000000LL);
+        const X_STATUS lt_wait = logon_title->Wait(0, 0, 0, &lt_timeout);
+        XELOGI("real_xam: logon title 81739568 finished with wait status {:08X}",
+               lt_wait);
       }
     }
     XELOGI("real_xam: xam.xex entry point finished with wait status {:08X}",

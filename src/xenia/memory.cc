@@ -390,10 +390,13 @@ static const struct {
         0x0000000080000000ull,
     },
     //  (256mb) - xex 4k pages
+    // Own backing, not a mirror of the 64k view: the real XAM (0x815F0000) and
+    // the modules it loads at runtime (ximecore.xex at 0x91680000, hud.xex...)
+    // overlap their offsets, and would overwrite each other's code.
     {
         0x90000000,
         0x9FFFFFFF,
-        0x0000000080000000ull,
+        0x0000000090000000ull,
     },
     //  (512mb) - physical 64k pages
     {
