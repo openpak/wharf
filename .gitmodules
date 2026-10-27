@@ -134,3 +134,6 @@
 [submodule "third_party/mbedtls"]
 	path = third_party/mbedtls
 	url = https://github.com/Mbed-TLS/mbedtls.git
+[submodule "third_party/libslirp"]
+	path = third_party/libslirp
+	url = https://gitlab.freedesktop.org/slirp/libslirp.git

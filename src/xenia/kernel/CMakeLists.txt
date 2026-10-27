@@ -20,6 +20,10 @@ target_link_libraries(xenia-kernel PUBLIC
   asio fmt mbedtls zlib-ng pugixml xenia-apu xenia-base xenia-cpu
   xenia-hid xenia-net xenia-vfs
 )
+if(TARGET slirp)
+  target_link_libraries(xenia-kernel PUBLIC slirp)
+  target_compile_definitions(xenia-kernel PRIVATE XE_HAVE_SLIRP=1)
+endif()
 xe_target_defaults(xenia-kernel)
 
 if(XENIA_BUILD_TESTS)
