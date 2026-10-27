@@ -504,7 +504,12 @@ int XexModule::ReadImage(const void* xex_addr, size_t xex_length,
     return 0;
   }
 
-  memory()->LookupHeap(base_address_)->Reset();
+  // Reset only while loading the first executable. A DLL loaded later by the
+  // running title (the real XAM loads hud.xex, ximecore.xex...) shares the
+  // 0x9xxxxxxx heap, and resetting it unallocates the title's own image.
+  if (!kernel_state_ || !kernel_state_->GetExecutableModule()) {
+    memory()->LookupHeap(base_address_)->Reset();
+  }
 
   aes_decrypt_buffer(
       key, reinterpret_cast<const uint8_t*>(xex_security_info()->aes_key), 16,
