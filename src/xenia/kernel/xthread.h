@@ -652,7 +652,7 @@ class XThread : public XObject, public cpu::Thread {
     // Gating needs every object, so a set that does not fit is not gated at
     // all rather than gated on a subset, which could park past a signal.
     links.wait_gate_count = 0;
-    if (objects && count <= 8) {
+    if (objects && count <= 64) {
       for (uint32_t i = 0; i < count; ++i) {
         links.wait_gate_objects[i] = objects[i];
       }
@@ -740,7 +740,7 @@ class XThread : public XObject, public cpu::Thread {
     // parked, where the waiting frame keeps them alive - the same lifetime the
     // single-object cooperative_wait_object() already relies on. Zero when the
     // set was too large to track, which just means no gating.
-    XObject* wait_gate_objects[8] = {};
+    XObject* wait_gate_objects[64] = {};
     uint8_t wait_gate_count = 0;
 
     // Safepoints since the last preemption that declined to preempt because the
