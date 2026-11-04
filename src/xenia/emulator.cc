@@ -7,6 +7,8 @@
  ******************************************************************************
  */
 
+#include <chrono>
+#include <thread>
 #include <ranges>
 
 #include "xenia/emulator.h"
@@ -2374,6 +2376,19 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
     file_system_->RegisterDevice(std::move(systemext_device));
   }
 
+  // XAM stores the downloaded online system module manifest at \sap\online
+  // (the \sap link resolves to \Device\Harddisk0\SystemAuxPartition)
+  // (FUN_8168BA58 creates it; the SystemAuxPartition on a real console). Mount a
+  // writable host directory (storage root "sap") so the online refresh can run.
+  {
+    std::filesystem::create_directories(storage_root_ / "sap");
+    auto sap_device = std::make_unique<vfs::HostPathDevice>(
+        "\\Device\\Harddisk0\\SystemAuxPartition", storage_root_ / "sap", false);
+    if (sap_device->Initialize()) {
+      file_system_->RegisterDevice(std::move(sap_device));
+    }
+  }
+
   // Setup NullDevices for raw HDD partition accesses
   // Cache/STFC code baked into games tries reading/writing to these
   // By using a NullDevice that just returns success to all IO requests it
@@ -2932,6 +2947,47 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
         XELOGI("real_xam: logon title 81739568 finished with wait status {:08X}",
                lt_wait);
       }
+    }
+    // XAM refreshes the online system module manifest from its Live logon
+    // (export 0x65A XampDemandUpdateRefreshManifestDuringLogon, 8168BD30: XMsg
+    // 0x25200 to app 0xFE, r3 = 0). Wharf runs no native logon, so request it
+    // from a helper thread. It needs app 0xFE (record 81AA0BA0, created by XAM's
+    // start-up thread FUN_816BDE90) and the hive's SOMRevision/UpdateUriRoot1,
+    // which arrive with the Live config; before that the call fails (HRESULT
+    // 8B05000E surfaces as 8007065B). Retry until \sap\online exists.
+    if (!getenv("WHARF_NOSOMREFRESH")) {
+      std::thread([this]() {
+        const auto sap_online = storage_root_ / "sap" / "online";
+        for (int attempt = 0; attempt < 240; ++attempt) {
+          std::this_thread::sleep_for(std::chrono::seconds(15));
+          if (std::filesystem::exists(sap_online)) break;
+          const auto* rec =
+              memory()->TranslateVirtual<const xe::be<uint32_t>*>(0x81AA0BA8);
+          if (rec[0] == 0 || rec[2] == 0) continue;
+          auto som = kernel::object_ref<kernel::XThread>(new kernel::XThread(
+              kernel_state(), 0x40000, 0, 0x8168BD30, 0, 0, true, false,
+              kernel_state()->GetSystemProcess()));
+          som->set_name("real xam som refresh 8168BD30");
+          if (!XSUCCEEDED(som->Create())) continue;
+          const uint32_t slot =
+              *memory()->TranslateVirtual<const xe::be<uint32_t>*>(0x81A82570);
+          const uint32_t block = memory()->SystemHeapAlloc(0x100);
+          if (block) {
+            std::memset(memory()->TranslateVirtual(block), 0, 0x100);
+            auto* words = memory()->TranslateVirtual<xe::be<uint32_t>*>(block);
+            words[0] = block + 0x10;
+            words[(0x10 + 0xC) / 4] = block + 0x40;
+            words[(0x40 + 0x4) / 4] = 1;
+            words[(0x40 + 0x18) / 4] = 0xFB;
+            som->SetTLSValue(slot, block);
+          }
+          som->Resume();
+          uint64_t som_timeout = static_cast<uint64_t>(-10 * 10000000LL);
+          const X_STATUS som_wait = som->Wait(0, 0, 0, &som_timeout);
+          XELOGI("real_xam: som refresh attempt {} wait status {:08X}", attempt,
+                 som_wait);
+        }
+      }).detach();
     }
     XELOGI("real_xam: xam.xex entry point finished with wait status {:08X}",
            wait);

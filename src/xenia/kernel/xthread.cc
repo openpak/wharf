@@ -562,6 +562,10 @@ X_STATUS XThread::Exit(int exit_code) {
   assert_true(XThread::GetCurrentThread() == this);
   // TODO(chrispy): not sure if this order is correct, should it come after
   // apcs?
+  if (thread_name_.rfind("real xam", 0) == 0) {
+    XELOGI("XThread '{}' exit code {:08X}", thread_name_,
+           static_cast<uint32_t>(exit_code));
+  }
   auto kthread = guest_object<X_KTHREAD>();
   auto cpu_context = thread_state_->context();
   kthread->terminated = 1;
