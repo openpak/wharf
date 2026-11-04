@@ -2389,6 +2389,17 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
     }
   }
 
+  // Writable host directory for \Device\Harddisk0\Cache (the cache partition
+  // XAM stages temporary TK_* files in); a NullDevice fails their creation.
+  {
+    std::filesystem::create_directories(storage_root_ / "syscache");
+    auto cache_device = std::make_unique<vfs::HostPathDevice>(
+        "\\Device\\Harddisk0\\Cache", storage_root_ / "syscache", false);
+    if (cache_device->Initialize()) {
+      file_system_->RegisterDevice(std::move(cache_device));
+    }
+  }
+
   // Setup NullDevices for raw HDD partition accesses
   // Cache/STFC code baked into games tries reading/writing to these
   // By using a NullDevice that just returns success to all IO requests it

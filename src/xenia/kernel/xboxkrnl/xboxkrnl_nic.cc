@@ -345,6 +345,35 @@ bool ResolveOverride(NicState& n, const std::string& name, uint32_t* ip) {
   return false;
 }
 
+// WHARF_NIC_HTTPLOG=1: log the first bytes of TCP payloads on port 80 in both
+// directions (development aid for mapping XAM HTTP clients; never on by default).
+static void LogHttpPayload(const char* dir, const uint8_t* f, size_t length,
+                           bool from_guest) {
+  static const bool enabled = getenv("WHARF_NIC_HTTPLOG") != nullptr;
+  if (!enabled || length < 14 + 20 || Be16(f + 12) != 0x0800 ||
+      (f[14] >> 4) != 4 || f[14 + 9] != 6) {
+    return;
+  }
+  const uint8_t* ip = f + 14;
+  const size_t ihl = (ip[0] & 15) * 4;
+  const size_t total = Be16(ip + 2);
+  const uint8_t* tcp = ip + ihl;
+  if (total > length - 14 || ihl + 20 > total) return;
+  const size_t thl = (tcp[12] >> 4) * 4;
+  if (ihl + thl >= total) return;
+  const uint16_t port = from_guest ? Be16(tcp + 2) : Be16(tcp);
+  if (port != 80) return;
+  const uint8_t* data = tcp + thl;
+  const size_t n = std::min<size_t>(total - ihl - thl, 160);
+  std::string text;
+  for (size_t i = 0; i < n; ++i) {
+    const uint8_t c = data[i];
+    if (c >= 0x20 && c < 0x7F) text.push_back(char(c));
+    else text += fmt::format("\\x{:02x}", c);
+  }
+  XELOGI("NIC http {} ({} B): {}", dir, total - ihl - thl, text);
+}
+
 // Looks at one frame the guest sent: logs what it is asking the network for
 // (the first thing to read when mapping a XAM feature to OpenPak) and answers
 // DNS queries that ResolveOverride() owns. True if the frame was consumed.
@@ -359,6 +388,7 @@ bool InspectGuestFrame(NicState& n, const uint8_t* f, size_t length) {
   }
   const uint8_t* l4 = ip + ihl;
   const uint8_t proto = ip[9];
+  LogHttpPayload("guest->net", f, length, true);
   if (proto == 6) {
     if (length >= 14 + ihl + 14 && (l4[13] & 0x12) == 0x02) {
       XELOGI("NIC tcp connect {}:{}", FormatIp(ip + 16), Be16(l4 + 2));
@@ -460,9 +490,11 @@ slirp_ssize_t SlirpSend(const void* buf, size_t len, void* opaque) {
                                static_cast<const uint8_t*>(buf) + len);
     UnmapTcpFromHost(n, frame.data(), frame.size());
     UnmapUdpFromHost(n, frame.data(), frame.size());
+    LogHttpPayload("net->guest", frame.data(), frame.size(), false);
     QueueRx(n, frame.data(), frame.size());
     return slirp_ssize_t(len);
   }
+  LogHttpPayload("net->guest", static_cast<const uint8_t*>(buf), len, false);
   QueueRx(n, static_cast<const uint8_t*>(buf), len);
   return slirp_ssize_t(len);
 }
