@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "xenia/base/logging.h"
+#include "xenia/base/string.h"
 #include "xenia/cpu/processor.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
@@ -425,7 +426,7 @@ dword_result_t ObReferenceObjectByName_entry(pointer_t<X_ANSI_STRING> name,
 
   // XAM's device monitors poll absent devices (HdDvdRom...) until the kernel
   // answers STATUS_NO_SUCH_DEVICE; anything else makes them spin.
-  if (object_type_ptr && !strncasecmp(name_str, "\\Device\\", 8)) {
+  if (object_type_ptr && !xe_strncasecmp(name_str, "\\Device\\", 8)) {
     return 0xC000000E;
   }
 
