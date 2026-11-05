@@ -561,7 +561,8 @@ void KernelState::SetExecutableModule(object_ref<UserModule> module) {
     auto handle_export = processor()->export_resolver()->GetExportByOrdinal(
         "xboxkrnl.exe", ordinals::XexExecutableModuleHandle);
     if (handle_export && handle_export->variable_ptr) {
-      *memory()->TranslateVirtual<xe::be<uint32_t>*>(handle_export->variable_ptr) = 0;
+      *memory()->TranslateVirtual<xe::be<uint32_t>*>(
+          handle_export->variable_ptr) = 0;
     }
     return;
   }
@@ -715,8 +716,7 @@ object_ref<UserModule> KernelState::LoadUserModule(
     // guest-thread identity.
     module = object_ref<UserModule>(new UserModule(this));
     X_STATUS status = module->LoadFromFile(path);
-    if (XFAILED(status) && real_xam_module_ &&
-        !name.starts_with("$flash_")) {
+    if (XFAILED(status) && real_xam_module_ && !name.starts_with("$flash_")) {
       // The system's flash modules sit in the package as $flash_<name>, which
       // is how the real XAM and dashboard ask for e.g. hud.xex.
       const auto flash_path = xe::utf8::join_guest_paths(
@@ -1007,14 +1007,15 @@ void KernelState::InitXmpVolumePatch() {
 void KernelState::TerminateTitleProcess() {
   auto* caller = XThread::GetCurrentThread();
   // The native XAM loader owns a system thread and must survive this call.
-  if (!caller || caller->guest_object<X_KTHREAD>()->process_type !=
-                     X_PROCTYPE_SYSTEM) {
+  if (!caller ||
+      caller->guest_object<X_KTHREAD>()->process_type != X_PROCTYPE_SYSTEM) {
     XELOGE("native title termination requires a system loader thread");
     return;
   }
   emulator()->BeginNativeTitleTransition();
 
-  auto threads = object_table()->GetObjectsByType<XThread>(XObject::Type::Thread);
+  auto threads =
+      object_table()->GetObjectsByType<XThread>(XObject::Type::Thread);
   std::vector<object_ref<XThread>> retiring;
   for (auto& thread : threads) {
     if (!thread->is_host_thread() && thread.get() != caller &&
@@ -1022,8 +1023,11 @@ void KernelState::TerminateTitleProcess() {
       retiring.push_back(thread);
     }
   }
-  XELOGI("native title termination: retiring {} title threads", retiring.size());
-  for (auto& thread : retiring) thread->Terminate(0);
+  XELOGI("native title termination: retiring {} title threads",
+         retiring.size());
+  for (auto& thread : retiring) {
+    thread->Terminate(0);
+  }
   if (GuestScheduler::enabled()) {
     for (auto& thread : retiring) {
       while (!guest_scheduler()->IsThreadQuiescent(thread.get())) {
@@ -1061,14 +1065,15 @@ void KernelState::TerminateTitleProcess() {
     for (auto& module : user_modules_) {
       // TITLE also marks title DLLs such as dashnui. XAM, the Guide and
       // system services have no TITLE flag and remain mapped.
-      if (module->is_executable()) title_modules.push_back(module);
+      if (module->is_executable()) {
+        title_modules.push_back(module);
+      }
     }
     std::erase_if(terminate_notifications_, [&](const auto& notify) {
-      return std::any_of(title_modules.begin(), title_modules.end(),
-                         [&](const auto& module) {
-                           return module->xex_module()->ContainsAddress(
-                               notify.guest_routine);
-                         });
+      return std::any_of(
+          title_modules.begin(), title_modules.end(), [&](const auto& module) {
+            return module->xex_module()->ContainsAddress(notify.guest_routine);
+          });
     });
   }
   SetExecutableModule(nullptr);
@@ -1082,9 +1087,13 @@ void KernelState::TerminateTitleProcess() {
 
 X_STATUS KernelState::StartTitleExecutable(uint32_t init_routine) {
   auto module = GetExecutableModule();
-  if (!module || module->is_dll_module()) return X_STATUS_INVALID_PARAMETER;
+  if (!module || module->is_dll_module()) {
+    return X_STATUS_INVALID_PARAMETER;
+  }
   auto thread = LaunchModule(module);
-  if (!thread) return X_STATUS_UNSUCCESSFUL;
+  if (!thread) {
+    return X_STATUS_UNSUCCESSFUL;
+  }
   thread->set_title_init_routine(init_routine);
   emulator()->AdoptNativeTitle(thread);
   XELOGI("native title start: {} entry {:08X}, initializer {:08X}",

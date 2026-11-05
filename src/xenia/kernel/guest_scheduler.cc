@@ -785,7 +785,9 @@ bool GuestScheduler::IsThreadQuiescent(XThread* thread) {
     return false;
   }
   for (const auto& cpu : cpus_) {
-    if (cpu.current_thread == thread) return false;
+    if (cpu.current_thread == thread) {
+      return false;
+    }
   }
   return true;
 }

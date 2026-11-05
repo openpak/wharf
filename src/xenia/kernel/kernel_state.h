@@ -243,7 +243,7 @@ class KernelState {
   void FreeTLS(cpu::ppc::PPCContext* context, uint32_t slot);
 
   void RegisterTitleTerminateNotification(uint32_t routine, uint32_t priority,
-                                         uint32_t registration);
+                                          uint32_t registration);
   void RemoveTitleTerminateNotification(uint32_t routine);
 
   void RegisterModule(XModule* module);

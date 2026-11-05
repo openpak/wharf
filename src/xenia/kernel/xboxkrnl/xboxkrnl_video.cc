@@ -110,10 +110,10 @@ namespace xboxkrnl {
 
 // XAM draws the system UI (HUD, Guide, sign-in and the other UI modules) with
 // its own Direct3D device into a command buffer in physical memory and hands
-// each finished frame to the kernel with VdSetSystemCommandBuffer. The 0x90-byte
-// descriptor names the buffer (physical address, dword count), the overlay
-// texture the buffer resolves into (base address as stored in the D3D texture
-// header, that is in one of the physical views; format; size) and the
+// each finished frame to the kernel with VdSetSystemCommandBuffer. The
+// 0x90-byte descriptor names the buffer (physical address, dword count), the
+// overlay texture the buffer resolves into (base address as stored in the D3D
+// texture header, that is in one of the physical views; format; size) and the
 // rectangles to composite it with. The kernel runs the buffer on the GPU with
 // the title's next swap and composites the overlay over the front buffer;
 // VdQuerySystemCommandBuffer tells XAM when the last submission has been taken
@@ -164,8 +164,8 @@ dword_result_t VdQuerySystemCommandBuffer_entry(const ppc_context_t& context) {
   {
     std::lock_guard<std::mutex> lock(xam_system_command_buffer_mutex);
     pending = xam_system_command_buffer.pending;
-    age_us = SystemCommandBufferNowUs() -
-             xam_system_command_buffer.submit_time_us;
+    age_us =
+        SystemCommandBufferNowUs() - xam_system_command_buffer.submit_time_us;
   }
   // Without a title swap to carry the buffer (nothing presenting yet), count
   // it as taken after a few frames so that XAM's UI loop keeps running.
@@ -649,15 +649,15 @@ void VdSwap_entry(
           kernel_memory()->SystemHeapAlloc(32, 0x20, kSystemHeapPhysical));
     }
     if (clear_copy_dest_size < clear_copy_size) {
-      clear_copy_dest = kernel_memory()->GetPhysicalAddress(
-          kernel_memory()->SystemHeapAlloc(clear_copy_size, 0x1000,
-                                           kSystemHeapPhysical));
+      clear_copy_dest =
+          kernel_memory()->GetPhysicalAddress(kernel_memory()->SystemHeapAlloc(
+              clear_copy_size, 0x1000, kSystemHeapPhysical));
       clear_copy_dest_size = clear_copy_dest ? clear_copy_size : 0;
     }
     if (clear_vertices &&
         (clear_vertices_width != ow || clear_vertices_height != oh)) {
-      auto* v = kernel_memory()->TranslatePhysical<xe::be<float>*>(
-          clear_vertices);
+      auto* v =
+          kernel_memory()->TranslatePhysical<xe::be<float>*>(clear_vertices);
       v[0] = 0.0f;
       v[1] = 0.0f;
       v[2] = float(ow);
@@ -676,7 +676,7 @@ void VdSwap_entry(
       dwords[offset++] =
           xenos::MakePacketType0(gpu::XE_GPU_REG_RB_SURFACE_INFO, 2);
       dwords[offset++] = xe::round_up(ow, 80);  // EDRAM tile width
-      dwords[offset++] = 0;                      // base 0, k_8_8_8_8
+      dwords[offset++] = 0;                     // base 0, k_8_8_8_8
       dwords[offset++] =
           xenos::MakePacketType0(gpu::XE_GPU_REG_RB_COLOR_CLEAR, 2);
       dwords[offset++] = 0;
@@ -691,8 +691,8 @@ void VdSwap_entry(
       dwords[offset++] =
           xenos::MakePacketType0(gpu::XE_GPU_REG_RB_MODECONTROL, 1);
       dwords[offset++] = uint32_t(xenos::EdramMode::kCopy);
-      dwords[offset++] = xenos::MakePacketType0(
-          gpu::XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0, 2);
+      dwords[offset++] =
+          xenos::MakePacketType0(gpu::XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0, 2);
       dwords[offset++] = clear_vertices | 3;  // vertex fetch
       dwords[offset++] = (6 << 2) | 2;        // six words, 8in32
       dwords[offset++] = xenos::MakePacketType3(xenos::PM4_DRAW_INDX_2, 1);

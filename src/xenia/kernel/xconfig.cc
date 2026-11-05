@@ -61,12 +61,13 @@ DEFINE_uint32(
     " optional. Ex) 0x00010001\n",
     "Console");
 
-DEFINE_uint32(
-    retail_flags, 0,
-    "The console's retail flags (XCONFIG_USER_RETAIL_FLAGS). The dashboard reads the "
-    "DashboardInitialized bit (0x40) to decide whether first-run setup is done and "
-    "writes it when setup finishes; 0 runs the setup.",
-    "Console");
+DEFINE_uint32(retail_flags, 0,
+              "The console's retail flags (XCONFIG_USER_RETAIL_FLAGS). The "
+              "dashboard reads the "
+              "DashboardInitialized bit (0x40) to decide whether first-run "
+              "setup is done and "
+              "writes it when setup finishes; 0 runs the setup.",
+              "Console");
 DEFINE_bool(allow_nui_initialization, false,
             "Enable NUI initialization\n"
             " Only set true when testing kinect games. Certain games may\n"
@@ -140,10 +141,10 @@ uint16_t BuildSetting(X_CONFIG_CATEGORY category, uint16_t setting,
           return 4;
         case XCONFIG_USER_RETAIL_FLAGS:
           xe::store_and_swap<uint32_t>(
-              out, cvars::retail_flags |
-                       (cvars::allow_nui_initialization
-                            ? X_RETAIL_FLAGS::KinectInitialized
-                            : 0));
+              out,
+              cvars::retail_flags | (cvars::allow_nui_initialization
+                                         ? X_RETAIL_FLAGS::KinectInitialized
+                                         : 0));
           return 4;
         case XCONFIG_USER_COUNTRY:
           out[0] = static_cast<uint8_t>(cvars::user_country);

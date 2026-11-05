@@ -191,8 +191,8 @@ WxWindow::~WxWindow() {
 #if XE_PLATFORM_LINUX
   if (pending_paint_source_) {
     // The id may be stale if its callback already ran, so look it up.
-    if (GSource* source = g_main_context_find_source_by_id(
-            nullptr, pending_paint_source_)) {
+    if (GSource* source =
+            g_main_context_find_source_by_id(nullptr, pending_paint_source_)) {
       g_source_destroy(source);
     }
     pending_paint_source_ = 0;

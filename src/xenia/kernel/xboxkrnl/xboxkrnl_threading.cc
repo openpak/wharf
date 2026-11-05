@@ -873,8 +873,8 @@ void KeInitializeMutant_entry(pointer_t<X_KMUTANT> mutant_ptr,
   mutant_ptr.Zero();
   mutant_ptr->header.type = MutantObject;
   mutant_ptr->header.signal_state = initial_owner ? 0 : 1;
-  auto mutant = XObject::GetNativeObject<XMutant>(
-      kernel_state(), mutant_ptr, MutantObject);
+  auto mutant = XObject::GetNativeObject<XMutant>(kernel_state(), mutant_ptr,
+                                                  MutantObject);
   assert_not_null(mutant);
 }
 DECLARE_XBOXKRNL_EXPORT1(KeInitializeMutant, kThreading, kImplemented);
@@ -882,8 +882,8 @@ DECLARE_XBOXKRNL_EXPORT1(KeInitializeMutant, kThreading, kImplemented);
 dword_result_t KeReleaseMutant_entry(pointer_t<X_KMUTANT> mutant_ptr,
                                      dword_t increment, dword_t abandon,
                                      dword_t wait) {
-  auto mutant = XObject::GetNativeObject<XMutant>(
-      kernel_state(), mutant_ptr, MutantObject);
+  auto mutant = XObject::GetNativeObject<XMutant>(kernel_state(), mutant_ptr,
+                                                  MutantObject);
   if (!mutant) {
     return X_STATUS_INVALID_HANDLE;
   }

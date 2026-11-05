@@ -97,7 +97,9 @@ void XTimer::CancelForProcess(uint32_t process) {
   auto global_lock = xe::global_critical_region::AcquireDirect();
   std::lock_guard<std::mutex> lock(LiveTimersLock());
   for (XTimer* timer : LiveTimers()) {
-    if (timer->owner_process_ == process && timer->timer_) timer->Cancel();
+    if (timer->owner_process_ == process && timer->timer_) {
+      timer->Cancel();
+    }
   }
 }
 

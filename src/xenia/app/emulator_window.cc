@@ -736,7 +736,7 @@ std::optional<LibraryKey> EmulatorWindow::RecordLaunchedDisc(
 }
 
 void EmulatorWindow::OnEmulatorInitialized() {
-    InitializeGameLibrary();
+  InitializeGameLibrary();
 
   // Wharf: no host "No Profiles Found" prompt. Profiles are created by the
   // firmware's own flow, never by a host dialog.

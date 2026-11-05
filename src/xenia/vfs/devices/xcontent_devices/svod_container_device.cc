@@ -41,9 +41,8 @@ SvodContainerDevice::Result SvodContainerDevice::LoadHostFiles() {
   const auto package_name = xe::path_to_utf8(host_path_.filename());
   if (!std::filesystem::exists(data_fragment_path) &&
       package_name.size() + 5 > 42) {
-    data_fragment_path =
-        host_path_.parent_path() /
-        xe::to_path(package_name.substr(0, 37) + ".data");
+    data_fragment_path = host_path_.parent_path() /
+                         xe::to_path(package_name.substr(0, 37) + ".data");
   }
   if (!std::filesystem::exists(data_fragment_path)) {
     XELOGE("STFS container is multi-file, but path {} does not exist.",

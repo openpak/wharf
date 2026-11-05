@@ -217,11 +217,13 @@ dword_result_t XexLoadExecutable_entry(lpstring_t module_name,
            module_name.value());
     return X_STATUS_UNSUCCESSFUL;
   }
-  const uint32_t result = XexLoadImage_entry(
-      module_name, module_flags, min_version, hmodule_ptr);
+  const uint32_t result =
+      XexLoadImage_entry(module_name, module_flags, min_version, hmodule_ptr);
   if (XSUCCEEDED(result)) {
     auto loaded = kernel_state()->GetModule(module_name.value(), true);
-    if (!loaded) return X_STATUS_NO_SUCH_FILE;
+    if (!loaded) {
+      return X_STATUS_NO_SUCH_FILE;
+    }
     kernel_state()->SetExecutableModule(
         retain_object(static_cast<UserModule*>(loaded.get())));
   }

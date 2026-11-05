@@ -771,7 +771,7 @@ void XThread::Execute() {
     if (title_init_routine_) {
       uint64_t init_args[] = {0};
       kernel_state()->processor()->Execute(thread_state_, title_init_routine_,
-                                            init_args, 1);
+                                           init_args, 1);
       title_init_routine_ = 0;
     }
     exit_code = static_cast<int>(kernel_state()->processor()->Execute(
@@ -812,7 +812,7 @@ void XThread::Execute() {
     if (title_init_routine_) {
       uint64_t init_args[] = {0};
       kernel_state()->processor()->Execute(thread_state_, title_init_routine_,
-                                            init_args, 1);
+                                           init_args, 1);
       title_init_routine_ = 0;
     }
     exit_code = static_cast<int>(kernel_state()->processor()->Execute(

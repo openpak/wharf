@@ -542,8 +542,8 @@ dword_result_t ObTranslateSymbolicLink_entry(dword_t attributes_ptr,
   const auto* attributes =
       kernel_memory()->TranslateVirtual<const X_OBJECT_ATTRIBUTES*>(
           attributes_ptr);
-  const auto* name_string = util::TranslateAnsiStringPointer(
-      kernel_memory(), attributes->name_ptr);
+  const auto* name_string =
+      util::TranslateAnsiStringPointer(kernel_memory(), attributes->name_ptr);
   if (!name_string) {
     return 0xC000000D;  // STATUS_INVALID_PARAMETER
   }
@@ -673,10 +673,10 @@ uint32_t xeObGuestWaitableAddress(XObject* object) {
   if (!object_header->object_type_ptr) {
     return 0;
   }
-  const uint32_t default_object =
-      memory->TranslateVirtual<const X_OBJECT_TYPE*>(
-              object_header->object_type_ptr)
-          ->unknown_size_or_object_;
+  const uint32_t default_object = memory
+                                      ->TranslateVirtual<const X_OBJECT_TYPE*>(
+                                          object_header->object_type_ptr)
+                                      ->unknown_size_or_object_;
   if (!default_object) {
     return 0;
   }
@@ -691,8 +691,10 @@ dword_result_t ObGetWaitableObject_entry(dword_t object) {
   const uint8_t header_type = *memory->TranslateVirtual<const uint8_t*>(object);
   if (header_type <= static_cast<uint8_t>(X_OBJECT_TYPES::SemaphoreObject) ||
       header_type == static_cast<uint8_t>(X_OBJECT_TYPES::ThreadObject) ||
-      header_type == static_cast<uint8_t>(X_OBJECT_TYPES::TimerNotificationObject) ||
-      header_type == static_cast<uint8_t>(X_OBJECT_TYPES::TimerSynchronizationObject)) {
+      header_type ==
+          static_cast<uint8_t>(X_OBJECT_TYPES::TimerNotificationObject) ||
+      header_type ==
+          static_cast<uint8_t>(X_OBJECT_TYPES::TimerSynchronizationObject)) {
     return object.value();
   }
   auto* object_header = memory->TranslateVirtual<const X_OBJECT_HEADER*>(
@@ -700,10 +702,10 @@ dword_result_t ObGetWaitableObject_entry(dword_t object) {
   if (!object_header->object_type_ptr) {
     return object.value();
   }
-  const uint32_t default_object =
-      memory->TranslateVirtual<const X_OBJECT_TYPE*>(
-              object_header->object_type_ptr)
-          ->unknown_size_or_object_;
+  const uint32_t default_object = memory
+                                      ->TranslateVirtual<const X_OBJECT_TYPE*>(
+                                          object_header->object_type_ptr)
+                                      ->unknown_size_or_object_;
   if (!default_object) {
     return object.value();
   }

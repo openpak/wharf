@@ -59,9 +59,9 @@ namespace shaders {
 #include "xenia/gpu/shaders/bytecode/vulkan_spirv/apply_gamma_table_cs.h"
 #include "xenia/gpu/shaders/bytecode/vulkan_spirv/apply_gamma_table_fxaa_luma_cs.h"
 #include "xenia/gpu/shaders/bytecode/vulkan_spirv/fxaa_cs.h"
-#include "xenia/gpu/shaders/bytecode/vulkan_spirv/xam_overlay_composite_cs.h"
 #include "xenia/gpu/shaders/bytecode/vulkan_spirv/fxaa_extreme_cs.h"
 #include "xenia/gpu/shaders/bytecode/vulkan_spirv/resolve_downscale_cs.h"
+#include "xenia/gpu/shaders/bytecode/vulkan_spirv/xam_overlay_composite_cs.h"
 }  // namespace shaders
 
 constexpr VkDescriptorPoolSize
@@ -1325,10 +1325,9 @@ bool VulkanCommandProcessor::SetupContext() {
   xam_overlay_pipeline_layout_create_info.pushConstantRangeCount = 1;
   xam_overlay_pipeline_layout_create_info.pPushConstantRanges =
       &xam_overlay_push_constant_range;
-  if (dfn.vkCreatePipelineLayout(device,
-                                 &xam_overlay_pipeline_layout_create_info,
-                                 nullptr,
-                                 &xam_overlay_pipeline_layout_) != VK_SUCCESS) {
+  if (dfn.vkCreatePipelineLayout(
+          device, &xam_overlay_pipeline_layout_create_info, nullptr,
+          &xam_overlay_pipeline_layout_) != VK_SUCCESS) {
     XELOGE("Failed to create the XAM overlay composite pipeline layout");
     return false;
   }

@@ -332,7 +332,8 @@ DECLARE_XBOXKRNL_EXPORT1(KeSetPriorityClassThread, kNone, kStub);
 dword_result_t XexShimLock_entry() { return 0; }
 DECLARE_XBOXKRNL_EXPORT1(XexShimLock, kNone, kStub);
 
-// Real XAM calls these while it sets up Live; none matters without console keys.
+// Real XAM calls these while it sets up Live; none matters without console
+// keys.
 dword_result_t VdRegisterXamGraphicsNotification_entry() { return 0; }
 DECLARE_XBOXKRNL_EXPORT1(VdRegisterXamGraphicsNotification, kNone, kStub);
 
@@ -375,9 +376,7 @@ dword_result_t DrvSetUserBindingCallback_entry(dword_t callback) {
 }
 DECLARE_XBOXKRNL_EXPORT1(DrvSetUserBindingCallback, kNone, kStub);
 
-dword_result_t DrvSetMicArrayStartCallback_entry(dword_t callback) {
-  return 0;
-}
+dword_result_t DrvSetMicArrayStartCallback_entry(dword_t callback) { return 0; }
 DECLARE_XBOXKRNL_EXPORT1(DrvSetMicArrayStartCallback, kNone, kStub);
 
 dword_result_t DrvSetDeviceConfigChangeCallback_entry(dword_t callback) {

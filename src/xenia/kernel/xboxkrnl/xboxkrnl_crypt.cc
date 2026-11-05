@@ -7,9 +7,9 @@
 ******************************************************************************
 */
 
+#include <algorithm>
 #include <mutex>
 #include <random>
-#include <algorithm>
 #include <tuple>
 
 #include <chrono>
@@ -23,22 +23,22 @@
 #include "third_party/mbedtls/include/mbedtls/md.h"
 #include "third_party/mbedtls/include/mbedtls/sha1.h"
 #include "xenia/base/cvar.h"
-#include "xenia/emulator.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/platform.h"
+#include "xenia/emulator.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_crypt.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
 
+#include "xenia/kernel/xboxkrnl/openpak_xsigner.h"
 #include "xenia/kernel/xboxkrnl/xecrypt_aes.h"
 #include "xenia/kernel/xboxkrnl/xecrypt_des.h"
-#include "xenia/kernel/xboxkrnl/xecrypt_md5.h"
-#include "xenia/kernel/xboxkrnl/xecrypt_rsa.h"
 #include "xenia/kernel/xboxkrnl/xecrypt_dh.h"
-#include "xenia/kernel/xboxkrnl/xecrypt_sha.h"
+#include "xenia/kernel/xboxkrnl/xecrypt_md5.h"
 #include "xenia/kernel/xboxkrnl/xecrypt_rotsum.h"
-#include "xenia/kernel/xboxkrnl/openpak_xsigner.h"
+#include "xenia/kernel/xboxkrnl/xecrypt_rsa.h"
+#include "xenia/kernel/xboxkrnl/xecrypt_sha.h"
 
 DEFINE_string(console_ca_key, "",
               "Wharf DEV: file with the OpenPak dev console CA private key\n"
@@ -51,12 +51,13 @@ DEFINE_string(xsigner_public_key, "",
               "OpenPak XSigner public RSA-2048 modulus file (512 hex digits).",
               "Kernel");
 
-DEFINE_string(xsigner_firmware_digests, "",
-              "Comma-separated SHA-1 digests (40 hex digits) of the firmware's own "
-              "Microsoft-signed manifests. Slot 0 accepts these without a "
-              "signature check (the retail key is not in this tree); every other "
-              "slot-0 signature must verify against --xsigner_public_key.",
-              "Kernel");
+DEFINE_string(
+    xsigner_firmware_digests, "",
+    "Comma-separated SHA-1 digests (40 hex digits) of the firmware's own "
+    "Microsoft-signed manifests. Slot 0 accepts these without a "
+    "signature check (the retail key is not in this tree); every other "
+    "slot-0 signature must verify against --xsigner_public_key.",
+    "Kernel");
 
 namespace xe {
 namespace kernel {
@@ -604,17 +605,29 @@ dword_result_t XeCryptBnDwLeDhModExp_entry(lpvoid_t base, lpvoid_t exponent,
 DECLARE_XBOXKRNL_EXPORT1(XeCryptBnDwLeDhModExp, kNone, kSketchy);
 
 dword_result_t XeCryptBnDwLeDhInvalBase_entry(lpvoid_t base, lpvoid_t group) {
-  if (group) return 1;
+  if (group) {
+    return 1;
+  }
   return LiveDhInvalidBase(base.as<uint8_t*>()) ? 1 : 0;
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptBnDwLeDhInvalBase, kNone, kSketchy);
 
 dword_result_t XeCryptBnDwLeDhEqualBase_entry(lpvoid_t base, lpvoid_t group) {
-  if (group) return 0;
-  if (!base) return 1;
+  if (group) {
+    return 0;
+  }
+  if (!base) {
+    return 1;
+  }
   const auto* bytes = base.as<uint8_t*>();
-  if (bytes[0] != 2) return 0;
-  for (size_t i = 1; i < 96; ++i) if (bytes[i]) return 0;
+  if (bytes[0] != 2) {
+    return 0;
+  }
+  for (size_t i = 1; i < 96; ++i) {
+    if (bytes[i]) {
+      return 0;
+    }
+  }
   return 1;
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptBnDwLeDhEqualBase, kNone, kSketchy);
@@ -718,11 +731,9 @@ struct X_AES_SCHEDULE {
   uint8_t key[32];
 };
 
-dword_result_t XeCryptAesCreateKeySchedule_entry(lpvoid_t key,
-                                                 dword_t key_size,
-                                                 pointer_t<X_AES_SCHEDULE> sched) {
-  if (!sched || !key ||
-      (key_size != 16 && key_size != 24 && key_size != 32)) {
+dword_result_t XeCryptAesCreateKeySchedule_entry(
+    lpvoid_t key, dword_t key_size, pointer_t<X_AES_SCHEDULE> sched) {
+  if (!sched || !key || (key_size != 16 && key_size != 24 && key_size != 32)) {
     return X_STATUS_INVALID_PARAMETER;
   }
   sched->key_size = static_cast<uint32_t>(key_size);
@@ -747,8 +758,11 @@ static bool AesScheduleContext(const X_AES_SCHEDULE* sched, bool encrypt,
 static void AesScheduleOne(pointer_t<X_AES_SCHEDULE> sched, lpvoid_t inp,
                            lpvoid_t out, bool encrypt) {
   mbedtls_aes_context ctx;
-  if (!AesScheduleContext(sched, encrypt, &ctx)) return;
-  mbedtls_aes_crypt_ecb(&ctx, encrypt ? MBEDTLS_AES_ENCRYPT : MBEDTLS_AES_DECRYPT,
+  if (!AesScheduleContext(sched, encrypt, &ctx)) {
+    return;
+  }
+  mbedtls_aes_crypt_ecb(&ctx,
+                        encrypt ? MBEDTLS_AES_ENCRYPT : MBEDTLS_AES_DECRYPT,
                         inp.as<uint8_t*>(), out.as<uint8_t*>());
   mbedtls_aes_free(&ctx);
 }
@@ -771,12 +785,14 @@ static void AesScheduleCbc(pointer_t<X_AES_SCHEDULE> sched, lpvoid_t inp,
                            dword_t inp_size, lpvoid_t out, lpvoid_t feed,
                            bool encrypt) {
   mbedtls_aes_context ctx;
-  if (!AesScheduleContext(sched, encrypt, &ctx)) return;
+  if (!AesScheduleContext(sched, encrypt, &ctx)) {
+    return;
+  }
   uint32_t n = inp_size & ~15u;
   if (n) {
-    mbedtls_aes_crypt_cbc(&ctx, encrypt ? MBEDTLS_AES_ENCRYPT : MBEDTLS_AES_DECRYPT,
-                          n, feed.as<uint8_t*>(), inp.as<uint8_t*>(),
-                          out.as<uint8_t*>());
+    mbedtls_aes_crypt_cbc(
+        &ctx, encrypt ? MBEDTLS_AES_ENCRYPT : MBEDTLS_AES_DECRYPT, n,
+        feed.as<uint8_t*>(), inp.as<uint8_t*>(), out.as<uint8_t*>());
   }
   mbedtls_aes_free(&ctx);
 }
@@ -804,15 +820,19 @@ void XeCryptHmacSha_entry(lpvoid_t key, dword_t key_size_in, lpvoid_t inp_1,
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptHmacSha, kNone, kImplemented);
 
-dword_result_t XeCryptHmacShaVerify_entry(
-    lpvoid_t key, dword_t key_size, lpvoid_t inp_1, dword_t inp_1_size,
-    lpvoid_t inp_2, dword_t inp_2_size, lpvoid_t inp_3, dword_t inp_3_size,
-    lpvoid_t expected, dword_t expected_size) {
-  if (!expected || !expected_size || expected_size > 20) return 0;
+dword_result_t XeCryptHmacShaVerify_entry(lpvoid_t key, dword_t key_size,
+                                          lpvoid_t inp_1, dword_t inp_1_size,
+                                          lpvoid_t inp_2, dword_t inp_2_size,
+                                          lpvoid_t inp_3, dword_t inp_3_size,
+                                          lpvoid_t expected,
+                                          dword_t expected_size) {
+  if (!expected || !expected_size || expected_size > 20) {
+    return 0;
+  }
   uint8_t digest[20];
-  XeCryptHmacSha(key.as<uint8_t*>(), key_size, inp_1.as<uint8_t*>(),
-                inp_1_size, inp_2.as<uint8_t*>(), inp_2_size,
-                inp_3.as<uint8_t*>(), inp_3_size, digest, sizeof(digest));
+  XeCryptHmacSha(key.as<uint8_t*>(), key_size, inp_1.as<uint8_t*>(), inp_1_size,
+                 inp_2.as<uint8_t*>(), inp_2_size, inp_3.as<uint8_t*>(),
+                 inp_3_size, digest, sizeof(digest));
   uint8_t difference = 0;
   for (uint32_t i = 0; i < expected_size; ++i) {
     difference |= digest[i] ^ expected.as<uint8_t*>()[i];
@@ -820,7 +840,6 @@ dword_result_t XeCryptHmacShaVerify_entry(
   return difference == 0;
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptHmacShaVerify, kNone, kImplemented);
-
 
 // HMAC-MD5 over the three optional inputs concatenated, same argument layout
 // as XeCryptHmacSha. XAM's XNet uses it right after a DNS answer.
@@ -851,7 +870,6 @@ void XeCryptHmacMd5_entry(lpvoid_t key, dword_t key_size, lpvoid_t inp_1,
   }
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptHmacMd5, kNone, kImplemented);
-
 
 // ---------------------------------------------------------------------------
 // Wharf DEV console identity. A real console owns an RSA-1024 console key
@@ -889,7 +907,9 @@ using Bytes = std::vector<uint8_t>;
 
 int RandomBytes(void*, unsigned char* out, size_t len) {
   static std::random_device rd;
-  for (size_t i = 0; i < len; i++) out[i] = uint8_t(rd());
+  for (size_t i = 0; i < len; i++) {
+    out[i] = uint8_t(rd());
+  }
   return 0;
 }
 
@@ -913,20 +933,26 @@ Bytes FromHex(const std::string& s) {
   };
   for (size_t i = 0; i + 1 < s.size(); i += 2) {
     const int a = nib(s[i]), b = nib(s[i + 1]);
-    if (a < 0 || b < 0) return {};
+    if (a < 0 || b < 0) {
+      return {};
+    }
     out.push_back(uint8_t(a << 4 | b));
   }
   return out;
 }
 
 bool IsProbablePrime(const mbedtls_mpi& n) {
-  static const int kSmall[] = {2,  3,  5,  7,  11, 13, 17, 19, 23, 29, 31,
-                               37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79,
-                               83, 89, 97, 101, 103, 107, 109, 113};
+  static const int kSmall[] = {2,  3,  5,  7,  11, 13,  17,  19,  23,  29,
+                               31, 37, 41, 43, 47, 53,  59,  61,  67,  71,
+                               73, 79, 83, 89, 97, 101, 103, 107, 109, 113};
   for (int sp : kSmall) {
     mbedtls_mpi_uint r;
-    if (mbedtls_mpi_mod_int(&r, &n, sp) != 0) return false;
-    if (r == 0) return mbedtls_mpi_cmp_int(&n, sp) == 0;
+    if (mbedtls_mpi_mod_int(&r, &n, sp) != 0) {
+      return false;
+    }
+    if (r == 0) {
+      return mbedtls_mpi_cmp_int(&n, sp) == 0;
+    }
   }
   Mpi n1, d, a, x, two;
   mbedtls_mpi_sub_int(&n1.v, &n, 1);
@@ -938,7 +964,9 @@ bool IsProbablePrime(const mbedtls_mpi& n) {
   for (int round = 0; round < 24; round++) {
     mbedtls_mpi_fill_random(&a.v, nbytes, RandomBytes, nullptr);
     mbedtls_mpi_mod_mpi(&a.v, &a.v, &n1.v);
-    if (mbedtls_mpi_cmp_int(&a.v, 2) < 0) mbedtls_mpi_lset(&a.v, 2);
+    if (mbedtls_mpi_cmp_int(&a.v, 2) < 0) {
+      mbedtls_mpi_lset(&a.v, 2);
+    }
     mbedtls_mpi_exp_mod(&x.v, &a.v, &d.v, &n, nullptr);
     if (mbedtls_mpi_cmp_int(&x.v, 1) == 0 ||
         mbedtls_mpi_cmp_mpi(&x.v, &n1.v) == 0) {
@@ -952,7 +980,9 @@ bool IsProbablePrime(const mbedtls_mpi& n) {
         break;
       }
     }
-    if (composite) return false;
+    if (composite) {
+      return false;
+    }
   }
   return true;
 }
@@ -966,8 +996,12 @@ void GenPrime(Mpi& p, size_t bits) {
     mbedtls_mpi_set_bit(&p.v, 0, 1);
     mbedtls_mpi_uint r;
     mbedtls_mpi_mod_int(&r, &p.v, 65537);
-    if (r == 1) continue;
-    if (IsProbablePrime(p.v)) return;
+    if (r == 1) {
+      continue;
+    }
+    if (IsProbablePrime(p.v)) {
+      return;
+    }
   }
 }
 
@@ -981,13 +1015,19 @@ RsaKey GenerateRsa(size_t bits) {
   for (;;) {
     GenPrime(p, bits / 2);
     GenPrime(q, bits / 2);
-    if (mbedtls_mpi_cmp_mpi(&p.v, &q.v) == 0) continue;
+    if (mbedtls_mpi_cmp_mpi(&p.v, &q.v) == 0) {
+      continue;
+    }
     mbedtls_mpi_mul_mpi(&n.v, &p.v, &q.v);
-    if (mbedtls_mpi_bitlen(&n.v) != bits) continue;
+    if (mbedtls_mpi_bitlen(&n.v) != bits) {
+      continue;
+    }
     mbedtls_mpi_sub_int(&p1.v, &p.v, 1);
     mbedtls_mpi_sub_int(&q1.v, &q.v, 1);
     mbedtls_mpi_mul_mpi(&phi.v, &p1.v, &q1.v);
-    if (mbedtls_mpi_inv_mod(&d.v, &e.v, &phi.v) != 0) continue;
+    if (mbedtls_mpi_inv_mod(&d.v, &e.v, &phi.v) != 0) {
+      continue;
+    }
     break;
   }
   RsaKey k;
@@ -1020,7 +1060,9 @@ Bytes Mgf1(const uint8_t* seed, size_t seed_len, size_t len) {
   Bytes out;
   for (uint32_t i = 0; out.size() < len; i++) {
     Bytes in(seed, seed + seed_len);
-    for (int s = 24; s >= 0; s -= 8) in.push_back(uint8_t(i >> s));
+    for (int s = 24; s >= 0; s -= 8) {
+      in.push_back(uint8_t(i >> s));
+    }
     uint8_t h[20];
     Sha1(in.data(), in.size(), h);
     out.insert(out.end(), h, h + 20);
@@ -1043,7 +1085,9 @@ Bytes PssSign(const RsaKey& ca, const uint8_t* msg, size_t msg_len) {
   db[db.size() - 11] = 1;
   std::memcpy(&db[db.size() - 10], salt, 10);
   const Bytes mask = Mgf1(h, 20, db.size());
-  for (size_t i = 0; i < db.size(); i++) db[i] ^= mask[i];
+  for (size_t i = 0; i < db.size(); i++) {
+    db[i] ^= mask[i];
+  }
   db[0] &= 0x7F;  // emBits = 8 * em_len - 1
   Bytes em = db;
   em.insert(em.end(), h, h + 20);
@@ -1053,8 +1097,9 @@ Bytes PssSign(const RsaKey& ca, const uint8_t* msg, size_t msg_len) {
 
 // RSASSA-PKCS1-v1_5 over an existing SHA-1 digest.
 Bytes Pkcs1Sign(const RsaKey& k, const uint8_t* digest20) {
-  static const uint8_t kInfo[] = {0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e,
-                                  0x03, 0x02, 0x1a, 0x05, 0x00, 0x04, 0x14};
+  static const uint8_t kInfo[] = {0x30, 0x21, 0x30, 0x09, 0x06,
+                                  0x05, 0x2b, 0x0e, 0x03, 0x02,
+                                  0x1a, 0x05, 0x00, 0x04, 0x14};
   const size_t len = k.n.size();
   Bytes em(len, 0xFF);
   em[0] = 0x00;
@@ -1081,10 +1126,14 @@ std::string Field(const std::string& text, const char* name) {
   size_t pos = 0;
   while (pos < text.size()) {
     size_t eol = text.find('\n', pos);
-    if (eol == std::string::npos) eol = text.size();
+    if (eol == std::string::npos) {
+      eol = text.size();
+    }
     if (text.compare(pos, tag.size(), tag) == 0) {
       std::string v = text.substr(pos + tag.size(), eol - pos - tag.size());
-      while (!v.empty() && (v.back() == '\r' || v.back() == ' ')) v.pop_back();
+      while (!v.empty() && (v.back() == '\r' || v.back() == ' ')) {
+        v.pop_back();
+      }
       return v;
     }
     pos = eol + 1;
@@ -1094,7 +1143,9 @@ std::string Field(const std::string& text, const char* name) {
 
 void DeriveDigits(Identity& id) {
   uint64_t v = 0;
-  for (int i = 0; i < 5; i++) v = v << 8 | id.console_id[i];
+  for (int i = 0; i < 5; i++) {
+    v = v << 8 | id.console_id[i];
+  }
   const std::string s = fmt::format("{:012}", v % 1000000000000ull);
   std::memcpy(id.id_digits, s.data(), 12);
 }
@@ -1105,7 +1156,7 @@ bool BuildCert(Identity& id, const RsaKey& ca) {
   c[1] = 0xA8;  // cert_size
   std::memcpy(&c[2], id.console_id, 5);
   std::memcpy(&c[7], "OPENPAKDEV", 10);  // console_part_number[11]
-  const uint32_t type = 2;  // Retail
+  const uint32_t type = 2;               // Retail
   c[0x18] = uint8_t(type >> 24);
   c[0x19] = uint8_t(type >> 16);
   c[0x1A] = uint8_t(type >> 8);
@@ -1120,7 +1171,9 @@ bool BuildCert(Identity& id, const RsaKey& ca) {
   c[0x27] = 0x01;
   std::memcpy(&c[0x28], id.key.n.data(), 0x80);
   const Bytes sig = PssSign(ca, c.data(), 0xA8);
-  if (sig.size() != 0x100) return false;
+  if (sig.size() != 0x100) {
+    return false;
+  }
   std::memcpy(&c[0xA8], sig.data(), 0x100);
   id.cert = c;
   return true;
@@ -1159,7 +1212,9 @@ Identity& Get() {
       RandomBytes(nullptr, id.console_id, 5);
       uint8_t r[12];
       RandomBytes(nullptr, r, 12);
-      for (int i = 0; i < 12; i++) id.serial[i] = char('0' + r[i] % 10);
+      for (int i = 0; i < 12; i++) {
+        id.serial[i] = char('0' + r[i] % 10);
+      }
       RandomBytes(nullptr, id.obf_key, 16);
       id.cert.clear();
       dirty = true;
@@ -1192,7 +1247,8 @@ Identity& Get() {
       std::error_code ec;
       std::filesystem::create_directories(dir, ec);
       std::ofstream out(file, std::ios::trunc);
-      out << "# Wharf DEV console identity, per instance. Private key: keep out of any repo.\n"
+      out << "# Wharf DEV console identity, per instance. Private key: keep "
+             "out of any repo.\n"
           << "n=" << ToHex(id.key.n.data(), 128) << "\n"
           << "d=" << ToHex(id.key.d.data(), 128) << "\n"
           << "id=" << ToHex(id.console_id, 5) << "\n"
@@ -1208,10 +1264,10 @@ Identity& Get() {
                                    ec);
     }
     id.ready = true;
-    XELOGI("wharf console: id {} serial {:.12} cert {}", ToHex(id.console_id, 5),
-           std::string(id.serial, 12),
-           id.cert.size() == 0x1A8 && id.cert[0] == 0x01 ? "signed"
-                                                           : "MISSING");
+    XELOGI(
+        "wharf console: id {} serial {:.12} cert {}", ToHex(id.console_id, 5),
+        std::string(id.serial, 12),
+        id.cert.size() == 0x1A8 && id.cert[0] == 0x01 ? "signed" : "MISSING");
   });
   return id;
 }
@@ -1292,10 +1348,9 @@ DECLARE_XBOXKRNL_EXPORT1(XeKeysHmacSha, kNone, kImplemented);
 void XeCryptRotSumSha_entry(lpvoid_t inp_1, dword_t inp_1_size, lpvoid_t inp_2,
                             dword_t inp_2_size, lpvoid_t out,
                             dword_t out_size) {
-  const auto digest = RotSumSha(inp_1_size ? inp_1.as<const uint8_t*>() : nullptr,
-                                inp_1_size,
-                                inp_2_size ? inp_2.as<const uint8_t*>() : nullptr,
-                                inp_2_size);
+  const auto digest =
+      RotSumSha(inp_1_size ? inp_1.as<const uint8_t*>() : nullptr, inp_1_size,
+                inp_2_size ? inp_2.as<const uint8_t*>() : nullptr, inp_2_size);
   if (out && out_size) {
     std::memcpy(out.as<uint8_t*>(), digest.data(),
                 std::min<size_t>(out_size, digest.size()));
@@ -1381,16 +1436,18 @@ DECLARE_XBOXKRNL_EXPORT1(XeKeysGetConsoleID, kNone, kImplemented);
 // system.manifest XAM reads at start-up; it rejects the manifest and the Live
 // logon's revision check fails when this returns 0). Wharf DEV STAND-IN: the
 // manifest's SHA-1 is still checked by XAM; the RSA step is accepted for key 0
-// because the matching public key is not in this tree. With --xsigner_public_key
-// set, key 0 is checked strictly (PKCS#1 v1.5 SHA-1) against the OpenPak
-// content key, like the console patch that replaces slot 0 on real hardware.
+// because the matching public key is not in this tree. With
+// --xsigner_public_key set, key 0 is checked strictly (PKCS#1 v1.5 SHA-1)
+// against the OpenPak content key, like the console patch that replaces slot 0
+// on real hardware.
 dword_result_t XeKeysVerifyRSASignature_entry(dword_t key_index, lpvoid_t hash,
                                               lpvoid_t signature,
                                               const ppc_context_t& ctx) {
   if (!hash || !signature) {
     return 0;
   }
-  if ((key_index <= 1 || key_index == 3) && !cvars::xsigner_public_key.empty()) {
+  if ((key_index <= 1 || key_index == 3) &&
+      !cvars::xsigner_public_key.empty()) {
     std::ifstream file(cvars::xsigner_public_key);
     std::string modulus;
     file >> modulus;
@@ -1414,8 +1471,10 @@ dword_result_t XeKeysVerifyRSASignature_entry(dword_t key_index, lpvoid_t hash,
       const bool manifest_check = lr >= 0x816EBE40 && lr < 0x816EBF90;
       const bool pinned =
           cvars::xsigner_firmware_digests.find(digest_hex) != std::string::npos;
-      XELOGI("OpenPak content signature: key 0 lr {:08X} manifest_check {} pinned {}",
-             lr, manifest_check, pinned);
+      XELOGI(
+          "OpenPak content signature: key 0 lr {:08X} manifest_check {} pinned "
+          "{}",
+          lr, manifest_check, pinned);
       return (!manifest_check || pinned) ? 1 : 0;
     }
     return verified ? 1 : 0;

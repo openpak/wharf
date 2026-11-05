@@ -295,8 +295,8 @@ dword_result_t RtlAppendStringToString_entry(
   if (length > destination->maximum_length) {
     return X_STATUS_BUFFER_TOO_SMALL;
   }
-  auto dst_buf = kernel_memory()->TranslateVirtual<uint8_t*>(
-      destination->pointer);
+  auto dst_buf =
+      kernel_memory()->TranslateVirtual<uint8_t*>(destination->pointer);
   auto src_buf = kernel_memory()->TranslateVirtual<uint8_t*>(source->pointer);
   std::memmove(dst_buf + destination->length, src_buf, source->length);
   destination->length = uint16_t(length);

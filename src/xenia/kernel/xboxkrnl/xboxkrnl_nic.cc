@@ -36,11 +36,12 @@
 #include "xenia/kernel/xthread.h"
 #include "xenia/xbox.h"
 
-DEFINE_string(nic_dns_hosts, "",
-              "Virtual NIC: guest DNS names answered locally instead of by the\n"
-              "host resolver, 'name=a.b.c.d;*.suffix=a.b.c.d'. Stand-in for the\n"
-              "OpenPak redirect list.",
-              "Network");
+DEFINE_string(
+    nic_dns_hosts, "",
+    "Virtual NIC: guest DNS names answered locally instead of by the\n"
+    "host resolver, 'name=a.b.c.d;*.suffix=a.b.c.d'. Stand-in for the\n"
+    "OpenPak redirect list.",
+    "Network");
 
 DEFINE_string(nic_tcp_port_map, "",
               "Virtual NIC (dev): guest TCP connections to the slirp host\n"
@@ -124,7 +125,7 @@ struct NicState {
   std::mutex queue_mutex;
   std::deque<std::vector<uint8_t>> rx_queue;  // frames for the guest
   std::deque<uint32_t> tx_done_queue;         // packets to complete
-  std::atomic<bool> link_changed{false};  // tell XAM about the link once
+  std::atomic<bool> link_changed{false};      // tell XAM about the link once
   std::set<uint64_t> seen_udp;
   std::vector<std::pair<std::string, uint32_t>> dns_hosts;  // name, ipv4 (net)
   // nic_tcp_port_map: guest-visible port -> host port. tcp_port_back maps
@@ -187,13 +188,19 @@ uint16_t TcpChecksum(const uint8_t* ip, size_t ihl, size_t total) {
   const uint8_t* seg = ip + ihl;
   const size_t seg_len = total - ihl;
   uint32_t sum = 0;
-  for (int i = 12; i < 20; i += 2) sum += Be16(ip + i);
+  for (int i = 12; i < 20; i += 2) {
+    sum += Be16(ip + i);
+  }
   sum += 6 + uint32_t(seg_len);
   for (size_t i = 0; i < seg_len; i += 2) {
-    if (i == 16) continue;
+    if (i == 16) {
+      continue;
+    }
     sum += i + 1 < seg_len ? Be16(seg + i) : uint32_t(seg[i] << 8);
   }
-  while (sum >> 16) sum = (sum & 0xFFFF) + (sum >> 16);
+  while (sum >> 16) {
+    sum = (sum & 0xFFFF) + (sum >> 16);
+  }
   return uint16_t(~sum);
 }
 
@@ -221,7 +228,9 @@ constexpr uint8_t kHostAlias[4] = {10, 0, 2, 2};
 void MapTcpToHost(NicState& n, uint8_t* f, size_t length) {
   size_t ihl, total;
   uint8_t* ip = TcpFrame(f, length, &ihl, &total);
-  if (!ip || memcmp(ip + 16, kHostAlias, 4) != 0) return;
+  if (!ip || memcmp(ip + 16, kHostAlias, 4) != 0) {
+    return;
+  }
   uint8_t* tcp = ip + ihl;
   const uint16_t sport = Be16(tcp), dport = Be16(tcp + 2);
   const bool syn = (tcp[13] & 0x12) == 0x02;
@@ -229,7 +238,9 @@ void MapTcpToHost(NicState& n, uint8_t* f, size_t length) {
   const auto it = n.tcp_port_map.find(dport);
   if (it == n.tcp_port_map.end()) {
     // A direct connection must not inherit a stale reverse mapping.
-    if (syn) n.tcp_port_back.erase(uint32_t(sport) << 16 | dport);
+    if (syn) {
+      n.tcp_port_back.erase(uint32_t(sport) << 16 | dport);
+    }
     return;
   }
   n.tcp_port_back[uint32_t(sport) << 16 | it->second] = dport;
@@ -245,12 +256,16 @@ void MapTcpToHost(NicState& n, uint8_t* f, size_t length) {
 void UnmapTcpFromHost(NicState& n, uint8_t* f, size_t length) {
   size_t ihl, total;
   uint8_t* ip = TcpFrame(f, length, &ihl, &total);
-  if (!ip || memcmp(ip + 12, kHostAlias, 4) != 0) return;
+  if (!ip || memcmp(ip + 12, kHostAlias, 4) != 0) {
+    return;
+  }
   uint8_t* tcp = ip + ihl;
   std::lock_guard<std::mutex> lock(n.port_mutex);
-  const auto it = n.tcp_port_back.find(uint32_t(Be16(tcp + 2)) << 16 |
-                                       Be16(tcp));
-  if (it == n.tcp_port_back.end()) return;
+  const auto it =
+      n.tcp_port_back.find(uint32_t(Be16(tcp + 2)) << 16 | Be16(tcp));
+  if (it == n.tcp_port_back.end()) {
+    return;
+  }
   PutBe16(tcp, it->second);
   PutBe16(tcp + 16, TcpChecksum(ip, ihl, total));
 }
@@ -261,13 +276,19 @@ uint16_t UdpChecksum(const uint8_t* ip, size_t ihl, size_t total) {
   const uint8_t* seg = ip + ihl;
   const size_t seg_len = total - ihl;
   uint32_t sum = 0;
-  for (int i = 12; i < 20; i += 2) sum += Be16(ip + i);
+  for (int i = 12; i < 20; i += 2) {
+    sum += Be16(ip + i);
+  }
   sum += 17 + uint32_t(seg_len);
   for (size_t i = 0; i < seg_len; i += 2) {
-    if (i == 6) continue;
+    if (i == 6) {
+      continue;
+    }
     sum += i + 1 < seg_len ? Be16(seg + i) : uint32_t(seg[i] << 8);
   }
-  while (sum >> 16) sum = (sum & 0xFFFF) + (sum >> 16);
+  while (sum >> 16) {
+    sum = (sum & 0xFFFF) + (sum >> 16);
+  }
   const uint16_t c = uint16_t(~sum);
   return c ? c : 0xFFFF;
 }
@@ -293,7 +314,9 @@ uint8_t* UdpFrame(uint8_t* f, size_t length, size_t* ihl, size_t* total) {
 void MapUdpToHost(NicState& n, uint8_t* f, size_t length) {
   size_t ihl, total;
   uint8_t* ip = UdpFrame(f, length, &ihl, &total);
-  if (!ip || memcmp(ip + 16, kHostAlias, 4) != 0) return;
+  if (!ip || memcmp(ip + 16, kHostAlias, 4) != 0) {
+    return;
+  }
   uint8_t* udp = ip + ihl;
   const uint16_t sport = Be16(udp), dport = Be16(udp + 2);
   std::lock_guard<std::mutex> lock(n.port_mutex);
@@ -303,27 +326,36 @@ void MapUdpToHost(NicState& n, uint8_t* f, size_t length) {
     n.udp_port_back.erase(uint32_t(sport) << 16 | dport);
     return;
   }
-  if (n.udp_port_back.insert_or_assign(uint32_t(sport) << 16 | it->second,
-                                       dport).second) {
+  if (n.udp_port_back
+          .insert_or_assign(uint32_t(sport) << 16 | it->second, dport)
+          .second) {
     XELOGI("NIC udp map 10.0.2.2:{} -> 127.0.0.1:{} (guest port {})", dport,
            it->second, sport);
   }
   PutBe16(udp + 2, it->second);
-  if (Be16(udp + 6) != 0) PutBe16(udp + 6, UdpChecksum(ip, ihl, total));
+  if (Be16(udp + 6) != 0) {
+    PutBe16(udp + 6, UdpChecksum(ip, ihl, total));
+  }
 }
 
 // slirp -> guest: restores the source port the guest sent to.
 void UnmapUdpFromHost(NicState& n, uint8_t* f, size_t length) {
   size_t ihl, total;
   uint8_t* ip = UdpFrame(f, length, &ihl, &total);
-  if (!ip || memcmp(ip + 12, kHostAlias, 4) != 0) return;
+  if (!ip || memcmp(ip + 12, kHostAlias, 4) != 0) {
+    return;
+  }
   uint8_t* udp = ip + ihl;
   std::lock_guard<std::mutex> lock(n.port_mutex);
-  const auto it = n.udp_port_back.find(uint32_t(Be16(udp + 2)) << 16 |
-                                       Be16(udp));
-  if (it == n.udp_port_back.end()) return;
+  const auto it =
+      n.udp_port_back.find(uint32_t(Be16(udp + 2)) << 16 | Be16(udp));
+  if (it == n.udp_port_back.end()) {
+    return;
+  }
   PutBe16(udp, it->second);
-  if (Be16(udp + 6) != 0) PutBe16(udp + 6, UdpChecksum(ip, ihl, total));
+  if (Be16(udp + 6) != 0) {
+    PutBe16(udp + 6, UdpChecksum(ip, ihl, total));
+  }
 }
 
 // OpenPak seam, see the header comment.
@@ -333,9 +365,9 @@ bool ResolveOverride(NicState& n, const std::string& name, uint32_t* ip) {
     if (!match && pattern.size() > 2 && pattern[0] == '*' &&
         pattern[1] == '.') {
       const std::string suffix = pattern.substr(1);
-      match = name.size() > suffix.size() &&
-              name.compare(name.size() - suffix.size(), suffix.size(),
-                           suffix) == 0;
+      match =
+          name.size() > suffix.size() &&
+          name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0;
     }
     if (match) {
       *ip = address;
@@ -346,7 +378,8 @@ bool ResolveOverride(NicState& n, const std::string& name, uint32_t* ip) {
 }
 
 // WHARF_NIC_HTTPLOG=1: log the first bytes of TCP payloads on port 80 in both
-// directions (development aid for mapping XAM HTTP clients; never on by default).
+// directions (development aid for mapping XAM HTTP clients; never on by
+// default).
 static void LogHttpPayload(const char* dir, const uint8_t* f, size_t length,
                            bool from_guest) {
   static const bool enabled = getenv("WHARF_NIC_HTTPLOG") != nullptr;
@@ -358,18 +391,27 @@ static void LogHttpPayload(const char* dir, const uint8_t* f, size_t length,
   const size_t ihl = (ip[0] & 15) * 4;
   const size_t total = Be16(ip + 2);
   const uint8_t* tcp = ip + ihl;
-  if (total > length - 14 || ihl + 20 > total) return;
+  if (total > length - 14 || ihl + 20 > total) {
+    return;
+  }
   const size_t thl = (tcp[12] >> 4) * 4;
-  if (ihl + thl >= total) return;
+  if (ihl + thl >= total) {
+    return;
+  }
   const uint16_t port = from_guest ? Be16(tcp + 2) : Be16(tcp);
-  if (port != 80) return;
+  if (port != 80) {
+    return;
+  }
   const uint8_t* data = tcp + thl;
   const size_t n = std::min<size_t>(total - ihl - thl, 160);
   std::string text;
   for (size_t i = 0; i < n; ++i) {
     const uint8_t c = data[i];
-    if (c >= 0x20 && c < 0x7F) text.push_back(char(c));
-    else text += fmt::format("\\x{:02x}", c);
+    if (c >= 0x20 && c < 0x7F) {
+      text.push_back(char(c));
+    } else {
+      text += fmt::format("\\x{:02x}", c);
+    }
   }
   XELOGI("NIC http {} ({} B): {}", dir, total - ihl - thl, text);
 }
@@ -401,9 +443,8 @@ bool InspectGuestFrame(NicState& n, const uint8_t* f, size_t length) {
   const uint16_t dport = Be16(l4 + 2);
   if (dport != 53) {
     if (dport != 67) {
-      const uint64_t key = uint64_t(*reinterpret_cast<const uint32_t*>(ip + 16))
-                               << 16 |
-                           dport;
+      const uint64_t key =
+          uint64_t(*reinterpret_cast<const uint32_t*>(ip + 16)) << 16 | dport;
       if (n.seen_udp.insert(key).second) {
         XELOGI("NIC udp to {}:{}", FormatIp(ip + 16), dport);
       }
@@ -445,15 +486,15 @@ bool InspectGuestFrame(NicState& n, const uint8_t* f, size_t length) {
   if (qtype != 1 || qclass != 1 || !ResolveOverride(n, name, &address)) {
     return false;
   }
-  XELOGI("NIC dns {} -> {} (override)", name, FormatIp(
-      reinterpret_cast<const uint8_t*>(&address)));
+  XELOGI("NIC dns {} -> {} (override)", name,
+         FormatIp(reinterpret_cast<const uint8_t*>(&address)));
 
   const size_t question_length = question_end - (dns + 12);
   const size_t dns_length = 12 + question_length + 16;
   std::vector<uint8_t> r(14 + 20 + 8 + dns_length, 0);
   uint8_t* re = r.data();
-  std::memcpy(re, f + 6, 6);      // to the guest
-  std::memcpy(re + 6, f, 6);      // from whoever it addressed
+  std::memcpy(re, f + 6, 6);  // to the guest
+  std::memcpy(re + 6, f, 6);  // from whoever it addressed
   PutBe16(re + 12, 0x0800);
   uint8_t* rip = re + 14;
   rip[0] = 0x45;
@@ -515,9 +556,15 @@ void SlirpNotify(void* opaque) { WakeNic(*static_cast<NicState*>(opaque)); }
 int SlirpAddPoll(slirp_os_socket fd, int events, void* opaque) {
   auto& n = *static_cast<NicState*>(opaque);
   short e = 0;
-  if (events & SLIRP_POLL_IN) e |= POLLIN;
-  if (events & SLIRP_POLL_OUT) e |= POLLOUT;
-  if (events & SLIRP_POLL_PRI) e |= POLLPRI;
+  if (events & SLIRP_POLL_IN) {
+    e |= POLLIN;
+  }
+  if (events & SLIRP_POLL_OUT) {
+    e |= POLLOUT;
+  }
+  if (events & SLIRP_POLL_PRI) {
+    e |= POLLPRI;
+  }
   n.fds.push_back({fd, e, 0});
   return int(n.fds.size() - 1);
 }
@@ -525,11 +572,21 @@ int SlirpGetRevents(int idx, void* opaque) {
   auto& n = *static_cast<NicState*>(opaque);
   const short r = n.fds[idx].revents;
   int e = 0;
-  if (r & POLLIN) e |= SLIRP_POLL_IN;
-  if (r & POLLOUT) e |= SLIRP_POLL_OUT;
-  if (r & POLLPRI) e |= SLIRP_POLL_PRI;
-  if (r & POLLERR) e |= SLIRP_POLL_ERR;
-  if (r & POLLHUP) e |= SLIRP_POLL_HUP;
+  if (r & POLLIN) {
+    e |= SLIRP_POLL_IN;
+  }
+  if (r & POLLOUT) {
+    e |= SLIRP_POLL_OUT;
+  }
+  if (r & POLLPRI) {
+    e |= SLIRP_POLL_PRI;
+  }
+  if (r & POLLERR) {
+    e |= SLIRP_POLL_ERR;
+  }
+  if (r & POLLHUP) {
+    e |= SLIRP_POLL_HUP;
+  }
   return e;
 }
 
@@ -577,7 +634,8 @@ void DeliverToGuest(NicState& n, cpu::ThreadState* thread_state) {
     }
     // The ring outlives XAM's use of a frame: it handles each one inside the
     // callback, and 128 slots is far more than it can hold on to.
-    const uint32_t guest_frame = n.rx_ring + (n.rx_next++ % kRxSlots) * kRxSlotSize;
+    const uint32_t guest_frame =
+        n.rx_ring + (n.rx_next++ % kRxSlots) * kRxSlotSize;
     std::memcpy(memory->TranslateVirtual<uint8_t*>(guest_frame), frame.data(),
                 frame.size());
     uint32_t kind = 1;
@@ -604,7 +662,8 @@ int NicThreadMain() {
     const int ready = poll(n.fds.data(), n.fds.size(), int(timeout));
     if (n.fds[0].revents & POLLIN) {
       uint64_t counter;
-      [[maybe_unused]] auto ignored = read(n.wake_fd, &counter, sizeof(counter));
+      [[maybe_unused]] auto ignored =
+          read(n.wake_fd, &counter, sizeof(counter));
     }
     {
       std::lock_guard<std::mutex> lock(n.slirp_mutex);
@@ -620,7 +679,8 @@ void StartBackend(NicState& n) {
     return;
   }
   SlirpConfig config = {};
-  config.version = 6;  // >= 6 selects register_poll_socket; older reads a null register_poll_fd
+  config.version = 6;  // >= 6 selects register_poll_socket; older reads a null
+                       // register_poll_fd
   config.in_enabled = true;
   inet_pton(AF_INET, "10.0.2.0", &config.vnetwork);
   inet_pton(AF_INET, "255.255.255.0", &config.vnetmask);
@@ -654,7 +714,9 @@ void StartBackend(NicState& n) {
   const std::string hosts = cvars::nic_dns_hosts;
   for (size_t pos = 0; pos < hosts.size();) {
     size_t next = hosts.find_first_of(";,", pos);
-    if (next == std::string::npos) next = hosts.size();
+    if (next == std::string::npos) {
+      next = hosts.size();
+    }
     const std::string entry = hosts.substr(pos, next - pos);
     const size_t eq = entry.find('=');
     in_addr address;
@@ -671,7 +733,9 @@ void StartBackend(NicState& n) {
   const std::string ports = cvars::nic_tcp_port_map;
   for (size_t pos = 0; pos < ports.size();) {
     size_t next = ports.find_first_of(";,", pos);
-    if (next == std::string::npos) next = ports.size();
+    if (next == std::string::npos) {
+      next = ports.size();
+    }
     const std::string entry = ports.substr(pos, next - pos);
     const size_t eq = entry.find('=');
     const int from = eq == std::string::npos ? 0 : atoi(entry.c_str());
@@ -687,7 +751,9 @@ void StartBackend(NicState& n) {
   const std::string uports = cvars::nic_udp_port_map;
   for (size_t pos = 0; pos < uports.size();) {
     size_t next = uports.find_first_of(";,", pos);
-    if (next == std::string::npos) next = uports.size();
+    if (next == std::string::npos) {
+      next = uports.size();
+    }
     const std::string entry = uports.substr(pos, next - pos);
     const size_t eq = entry.find('=');
     const int from = eq == std::string::npos ? 0 : atoi(entry.c_str());
@@ -716,8 +782,9 @@ void StartBackend(NicState& n) {
 }  // namespace
 
 dword_result_t NicAttach_entry(dword_t config_ptr, dword_t handle_out) {
-  const auto* c = kernel_state()->memory()->TranslateVirtual<
-      const xe::be<uint32_t>*>(config_ptr);
+  const auto* c =
+      kernel_state()->memory()->TranslateVirtual<const xe::be<uint32_t>*>(
+          config_ptr);
   auto& n = nic();
   {
     std::lock_guard<std::mutex> lock(n.mutex);
@@ -728,10 +795,11 @@ dword_result_t NicAttach_entry(dword_t config_ptr, dword_t handle_out) {
     n.attached = true;
     n.options[kOptReceiveFilter] = c[0];
   }
-  XELOGI("NIC attach: filter {:08X} ctx {:08X} rx {:08X} link {:08X} txdone "
-         "{:08X}",
-         static_cast<uint32_t>(c[0]), n.context, n.rx_callback,
-         n.link_callback, n.tx_done_callback);
+  XELOGI(
+      "NIC attach: filter {:08X} ctx {:08X} rx {:08X} link {:08X} txdone "
+      "{:08X}",
+      static_cast<uint32_t>(c[0]), n.context, n.rx_callback, n.link_callback,
+      n.tx_done_callback);
 #ifdef XE_HAVE_SLIRP
   StartBackend(n);
 #endif
@@ -751,9 +819,7 @@ dword_result_t NicDetach_entry(dword_t handle) {
 }
 DECLARE_XBOXKRNL_EXPORT1(NicDetach, kNone, kImplemented);
 
-dword_result_t NicGetLinkState_entry(dword_t handle) {
-  return kLinkState;
-}
+dword_result_t NicGetLinkState_entry(dword_t handle) { return kLinkState; }
 DECLARE_XBOXKRNL_EXPORT2(NicGetLinkState, kNone, kImplemented, kHighFrequency);
 
 dword_result_t NicXmit_entry(dword_t handle, dword_t vlan, dword_t frame_ptr,

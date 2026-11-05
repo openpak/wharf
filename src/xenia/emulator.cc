@@ -8,8 +8,8 @@
  */
 
 #include <chrono>
-#include <thread>
 #include <ranges>
+#include <thread>
 
 #include "xenia/emulator.h"
 
@@ -41,12 +41,12 @@
 #include "xenia/hid/input_driver.h"
 #include "xenia/hid/input_system.h"
 #include "xenia/kernel/guest_scheduler.h"
+#include "xenia/kernel/kernel_flags.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/title_id_utils.h"
 #include "xenia/kernel/user_module.h"
 #include "xenia/kernel/xam/achievement_manager.h"
 #include "xenia/kernel/xam/ui/disc_swap_ui.h"
-#include "xenia/kernel/kernel_flags.h"
 #include "xenia/kernel/xam/xam_module.h"
 #include "xenia/kernel/xam/xdbf/spa_info.h"
 #include "xenia/kernel/xbdm/xbdm_module.h"
@@ -2133,7 +2133,9 @@ void Emulator::WaitUntilExit() {
     }
     {
       std::lock_guard lock(native_main_thread_mutex_);
-      if (waited.get() != main_thread_.get()) continue;
+      if (waited.get() != main_thread_.get()) {
+        continue;
+      }
     }
 
     if (restoring_) {
@@ -2308,8 +2310,7 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
 
   for (const auto& [name, host] : xbla_titles) {
     auto xbla_device = std::make_unique<vfs::HostPathDevice>(
-        "\\Device\\Harddisk0\\Partition1\\Content\\0000000000000000\\" +
-            name,
+        "\\Device\\Harddisk0\\Partition1\\Content\\0000000000000000\\" + name,
         host, true);
     if (xbla_device->Initialize()) {
       file_system_->RegisterDevice(std::move(xbla_device));
@@ -2346,8 +2347,8 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
     }
     XELOGI("roms_path: {} disc image(s) found", isos.size());
     if (chosen != isos.end()) {
-      auto disc = std::make_unique<vfs::DiscImageDevice>("\\Device\\Cdrom0",
-                                                         *chosen);
+      auto disc =
+          std::make_unique<vfs::DiscImageDevice>("\\Device\\Cdrom0", *chosen);
       if (disc->Initialize()) {
         file_system_->RegisterDevice(std::move(disc));
         XELOGI("roms_path: disc {} on \\Device\\Cdrom0",
@@ -2378,12 +2379,14 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
 
   // XAM stores the downloaded online system module manifest at \sap\online
   // (the \sap link resolves to \Device\Harddisk0\SystemAuxPartition)
-  // (FUN_8168BA58 creates it; the SystemAuxPartition on a real console). Mount a
-  // writable host directory (storage root "sap") so the online refresh can run.
+  // (FUN_8168BA58 creates it; the SystemAuxPartition on a real console). Mount
+  // a writable host directory (storage root "sap") so the online refresh can
+  // run.
   {
     std::filesystem::create_directories(storage_root_ / "sap");
     auto sap_device = std::make_unique<vfs::HostPathDevice>(
-        "\\Device\\Harddisk0\\SystemAuxPartition", storage_root_ / "sap", false);
+        "\\Device\\Harddisk0\\SystemAuxPartition", storage_root_ / "sap",
+        false);
     if (sap_device->Initialize()) {
       file_system_->RegisterDevice(std::move(sap_device));
     }
@@ -2404,8 +2407,8 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
   // Cache/STFC code baked into games tries reading/writing to these
   // By using a NullDevice that just returns success to all IO requests it
   // should allow games to believe cache/raw disk was accessed successfully
-  auto null_paths = {std::string("\\Partition0"), std::string("\\Partition1"), std::string("\\Cache0"),
-                     std::string("\\Cache1")};
+  auto null_paths = {std::string("\\Partition0"), std::string("\\Partition1"),
+                     std::string("\\Cache0"), std::string("\\Cache1")};
   auto null_device =
       std::make_unique<vfs::NullDevice>("\\Device\\Harddisk0", null_paths);
   if (null_device->Initialize()) {
@@ -2413,11 +2416,12 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
   }
 
   // XAM's device monitor probes "\Device\Harddisk0\Partition1\" with
-  // NtQueryFullAttributesFile; unless the root exists the HDD is left in state 4
-  // and the content layer reports no storage device.
+  // NtQueryFullAttributesFile; unless the root exists the HDD is left in state
+  // 4 and the content layer reports no storage device.
   {
-    auto hdd_root = std::make_unique<vfs::NullDevice>(
-        "\\Device\\Harddisk0\\Partition1", std::initializer_list<std::string>{});
+    auto hdd_root =
+        std::make_unique<vfs::NullDevice>("\\Device\\Harddisk0\\Partition1",
+                                          std::initializer_list<std::string>{});
     if (hdd_root->Initialize()) {
       file_system_->RegisterDevice(std::move(hdd_root));
     }
@@ -2761,15 +2765,15 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
     // Device id 0x4000000N: class 4 (gamepad) and user slot N-1.
     const uint32_t binding = kernel_state()->drv_user_binding_callback();
     // XamInputGetState looks the device up in slot 0, or slot 3 when the caller
-    // asks for keystroke mode (flag 8), which is what the dashboard's menus use.
-    // So the kernel connects the pad for both port types.
+    // asks for keystroke mode (flag 8), which is what the dashboard's menus
+    // use. So the kernel connects the pad for both port types.
     for (const uint64_t port_type : {0, 3}) {
       if (!binding) {
         break;
       }
-      auto connect = kernel::object_ref<kernel::XThread>(new kernel::XThread(
-          kernel_state(), 0x40000, 0, binding, 1, 0, true, false,
-          kernel_state()->GetSystemProcess()));
+      auto connect = kernel::object_ref<kernel::XThread>(
+          new kernel::XThread(kernel_state(), 0x40000, 0, binding, 1, 0, true,
+                              false, kernel_state()->GetSystemProcess()));
       connect->set_name("real xam connect");
       connect->SetExtraStartArgs({0x40000001, port_type, 0, 0});
       if (XSUCCEEDED(connect->Create())) {
@@ -2788,9 +2792,9 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
       const auto* insn = memory()->TranslateVirtual<const xe::be<uint32_t>*>(
           kXamTitleHeapInit);
       if (static_cast<uint32_t>(*insn) == 0x7D8802A6) {  // mflr r12
-        auto heap_init = kernel::object_ref<kernel::XThread>(
-            new kernel::XThread(kernel_state(), 0x40000, 0, kXamTitleHeapInit,
-                                0, 0, true));
+        auto heap_init =
+            kernel::object_ref<kernel::XThread>(new kernel::XThread(
+                kernel_state(), 0x40000, 0, kXamTitleHeapInit, 0, 0, true));
         heap_init->set_name("real xam title heap");
         if (XSUCCEEDED(heap_init->Create())) {
           uint64_t heap_timeout = static_cast<uint64_t>(-10 * 10000000LL);
@@ -2810,9 +2814,9 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
     // it runs with the flag set; 816CEBD8 creates the dispatch object.
     {
       auto run_xam_step = [&](uint32_t address, const char* name) {
-        auto step = kernel::object_ref<kernel::XThread>(new kernel::XThread(
-            kernel_state(), 0x40000, 0, address, 0, 0, true, false,
-            kernel_state()->GetSystemProcess()));
+        auto step = kernel::object_ref<kernel::XThread>(
+            new kernel::XThread(kernel_state(), 0x40000, 0, address, 0, 0, true,
+                                false, kernel_state()->GetSystemProcess()));
         step->set_name(name);
         if (XSUCCEEDED(step->Create())) {
           uint64_t step_timeout = static_cast<uint64_t>(-10 * 10000000LL);
@@ -2824,10 +2828,10 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
       // The kernel patched XAM's import slot with XboxHardwareInfo's address.
       const uint32_t hardware_info =
           *memory()->TranslateVirtual<const xe::be<uint32_t>*>(0x815F0480);
-      auto* flags = hardware_info
-                        ? memory()->TranslateVirtual<xe::be<uint32_t>*>(
-                              hardware_info)
-                        : nullptr;
+      auto* flags =
+          hardware_info
+              ? memory()->TranslateVirtual<xe::be<uint32_t>*>(hardware_info)
+              : nullptr;
       if (flags) {
         const uint32_t saved = *flags;
         *flags = saved | 0x200;
@@ -2848,18 +2852,18 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
           *memory()->TranslateVirtual<const xe::be<uint32_t>*>(0x81A9F850);
       const uint32_t header = module->guest_xex_header();
       if (state && header) {
-        auto title_info = kernel::object_ref<kernel::XThread>(
-            new kernel::XThread(kernel_state(), 0x40000, 0, 0x8169BDD0,
-                                state + 0x18, 0, true, false,
-                                kernel_state()->GetSystemProcess()));
+        auto title_info =
+            kernel::object_ref<kernel::XThread>(new kernel::XThread(
+                kernel_state(), 0x40000, 0, 0x8169BDD0, state + 0x18, 0, true,
+                false, kernel_state()->GetSystemProcess()));
         title_info->set_name("real xam title info 8169BDD0");
         title_info->SetExtraStartArgs({header, 0, 0});
         if (XSUCCEEDED(title_info->Create())) {
           uint64_t info_timeout = static_cast<uint64_t>(-10 * 10000000LL);
-          const X_STATUS info_wait =
-              title_info->Wait(0, 0, 0, &info_timeout);
-          const auto* block = memory()->TranslateVirtual<const xe::be<uint32_t>*>(
-              state + 0x18 + 0x1C);
+          const X_STATUS info_wait = title_info->Wait(0, 0, 0, &info_timeout);
+          const auto* block =
+              memory()->TranslateVirtual<const xe::be<uint32_t>*>(state + 0x18 +
+                                                                  0x1C);
           XELOGI(
               "real_xam: title info 8169BDD0 finished with wait status {:08X}: "
               "[0]={:08X} [1]={:08X} [2]={:08X} [3]={:08X}",
@@ -2895,7 +2899,7 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
           if (block) {
             std::memset(memory()->TranslateVirtual(block), 0, 0x100);
             auto* words = memory()->TranslateVirtual<xe::be<uint32_t>*>(block);
-            words[0] = block + 0x10;                // TLS value -> {ptr}
+            words[0] = block + 0x10;                 // TLS value -> {ptr}
             words[(0x10 + 0xC) / 4] = block + 0x40;  // current task object
             // The task object is ref-counted (+4; a release that reaches 0
             // calls its null vtable) and carries the app id at +0x18
@@ -2907,18 +2911,21 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
           start->Resume();
           uint64_t start_timeout = static_cast<uint64_t>(-10 * 10000000LL);
           const X_STATUS start_wait = start->Wait(0, 0, 0, &start_timeout);
-          XELOGI("real_xam: xgi title start 81907C40 finished with wait status {:08X}",
-                 start_wait);
+          XELOGI(
+              "real_xam: xgi title start 81907C40 finished with wait status "
+              "{:08X}",
+              start_wait);
         }
       } else {
         XELOGW("real_xam: no xgi app object at 81A96838");
       }
-      // The token service (XMsg 0xFE/0x2F001, FUN_816C12A8) polls 816C0140, which
-      // returns "pending" until the event at 81A83018 is signalled. XAM signals it
-      // (profile interface method +0x20, 816DB6F8: KeSetEvent(81A83018)) at the end
-      // of the title-start auto-logon (816DD308, called from 8169F348), which Wharf
-      // does not run. Without it every REST/XSTS token request (profile data
-      // recovery, "Downloading your game info") stays pending without traffic.
+      // The token service (XMsg 0xFE/0x2F001, FUN_816C12A8) polls 816C0140,
+      // which returns "pending" until the event at 81A83018 is signalled. XAM
+      // signals it (profile interface method +0x20, 816DB6F8:
+      // KeSetEvent(81A83018)) at the end of the title-start auto-logon
+      // (816DD308, called from 8169F348), which Wharf does not run. Without it
+      // every REST/XSTS token request (profile data recovery, "Downloading your
+      // game info") stays pending without traffic.
       auto token_event = kernel::object_ref<kernel::XThread>(
           new kernel::XThread(kernel_state(), 0x40000, 0, 0x816DB6F8, 0, 0,
                               true, false, kernel_state()->GetSystemProcess()));
@@ -2926,17 +2933,19 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
       if (XSUCCEEDED(token_event->Create())) {
         uint64_t ev_timeout = static_cast<uint64_t>(-10 * 10000000LL);
         const X_STATUS ev_wait = token_event->Wait(0, 0, 0, &ev_timeout);
-        XELOGI("real_xam: token event 816DB6F8 finished with wait status {:08X}",
-               ev_wait);
+        XELOGI(
+            "real_xam: token event 816DB6F8 finished with wait status {:08X}",
+            ev_wait);
       }
       // The token service also requires the logon engine's title to equal the
-      // running title (816C0140 compares FUN_816E03B8 with FUN_81739668(0xC); the
-      // latter is 0 here, so it stays "pending"). XAM sets it with 81739568 (title
-      // id into the engine, flag 0x4000000) while starting a title's logon.
-      auto logon_title = kernel::object_ref<kernel::XThread>(
-          new kernel::XThread(kernel_state(), 0x40000, 0, 0x81739568,
-                              0xFFFE07D1, 1, true, false,
-                              kernel_state()->GetSystemProcess()));
+      // running title (816C0140 compares FUN_816E03B8 with FUN_81739668(0xC);
+      // the latter is 0 here, so it stays "pending"). XAM sets it with 81739568
+      // (title id into the engine, flag 0x4000000) while starting a title's
+      // logon.
+      auto logon_title =
+          kernel::object_ref<kernel::XThread>(new kernel::XThread(
+              kernel_state(), 0x40000, 0, 0x81739568, 0xFFFE07D1, 1, true,
+              false, kernel_state()->GetSystemProcess()));
       logon_title->set_name("real xam logon title 81739568");
       if (XSUCCEEDED(logon_title->Create())) {
         // Same all-zero task context as the xgi start thread above.
@@ -2955,31 +2964,39 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
         logon_title->Resume();
         uint64_t lt_timeout = static_cast<uint64_t>(-10 * 10000000LL);
         const X_STATUS lt_wait = logon_title->Wait(0, 0, 0, &lt_timeout);
-        XELOGI("real_xam: logon title 81739568 finished with wait status {:08X}",
-               lt_wait);
+        XELOGI(
+            "real_xam: logon title 81739568 finished with wait status {:08X}",
+            lt_wait);
       }
     }
     // XAM refreshes the online system module manifest from its Live logon
     // (export 0x65A XampDemandUpdateRefreshManifestDuringLogon, 8168BD30: XMsg
     // 0x25200 to app 0xFE, r3 = 0). Wharf runs no native logon, so request it
-    // from a helper thread. It needs app 0xFE (record 81AA0BA0, created by XAM's
-    // start-up thread FUN_816BDE90) and the hive's SOMRevision/UpdateUriRoot1,
-    // which arrive with the Live config; before that the call fails (HRESULT
-    // 8B05000E surfaces as 8007065B). Retry until \sap\online exists.
+    // from a helper thread. It needs app 0xFE (record 81AA0BA0, created by
+    // XAM's start-up thread FUN_816BDE90) and the hive's
+    // SOMRevision/UpdateUriRoot1, which arrive with the Live config; before
+    // that the call fails (HRESULT 8B05000E surfaces as 8007065B). Retry until
+    // \sap\online exists.
     if (!getenv("WHARF_NOSOMREFRESH")) {
       std::thread([this]() {
         const auto sap_online = storage_root_ / "sap" / "online";
         for (int attempt = 0; attempt < 240; ++attempt) {
           std::this_thread::sleep_for(std::chrono::seconds(15));
-          if (std::filesystem::exists(sap_online)) break;
+          if (std::filesystem::exists(sap_online)) {
+            break;
+          }
           const auto* rec =
               memory()->TranslateVirtual<const xe::be<uint32_t>*>(0x81AA0BA8);
-          if (rec[0] == 0 || rec[2] == 0) continue;
+          if (rec[0] == 0 || rec[2] == 0) {
+            continue;
+          }
           auto som = kernel::object_ref<kernel::XThread>(new kernel::XThread(
               kernel_state(), 0x40000, 0, 0x8168BD30, 0, 0, true, false,
               kernel_state()->GetSystemProcess()));
           som->set_name("real xam som refresh 8168BD30");
-          if (!XSUCCEEDED(som->Create())) continue;
+          if (!XSUCCEEDED(som->Create())) {
+            continue;
+          }
           const uint32_t slot =
               *memory()->TranslateVirtual<const xe::be<uint32_t>*>(0x81A82570);
           const uint32_t block = memory()->SystemHeapAlloc(0x100);
@@ -3023,7 +3040,8 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
         const uint32_t info_title = manager[0x34 / 4];
         if (prior_state == 1 && prior_title == 0 &&
             info_title == running_info->title_id) {
-          manager[0x2E8 / 4] = 0;  // The externally started first title is live.
+          manager[0x2E8 / 4] =
+              0;  // The externally started first title is live.
           manager[0x28C / 4] = running_info->title_id;
           manager[0] = 5;
           XELOGI("real_xam: published running dashboard {:08X}, state {} -> 5",
@@ -3039,10 +3057,10 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
               memory()->TranslateVirtual<const xe::be<uint32_t>*>(
                   kXamTitleNotifications);
           if (static_cast<uint32_t>(*notify_insn) == 0x7D8802A6) {
-            auto notifications = kernel::object_ref<kernel::XThread>(
-                new kernel::XThread(kernel_state(), 0x40000, 0,
-                                    kXamTitleNotifications, 0, 0, true, false,
-                                    kernel_state()->GetSystemProcess()));
+            auto notifications =
+                kernel::object_ref<kernel::XThread>(new kernel::XThread(
+                    kernel_state(), 0x40000, 0, kXamTitleNotifications, 0, 0,
+                    true, false, kernel_state()->GetSystemProcess()));
             notifications->set_name("real xam title notifications");
             if (XSUCCEEDED(notifications->Create())) {
               uint64_t timeout = static_cast<uint64_t>(-10 * 10000000LL);
@@ -3051,8 +3069,10 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
             }
           }
         } else {
-          XELOGW("real_xam: skipped dashboard publication: state={} title={:08X} "
-                 "info={:08X}", prior_state, prior_title, info_title);
+          XELOGW(
+              "real_xam: skipped dashboard publication: state={} title={:08X} "
+              "info={:08X}",
+              prior_state, prior_title, info_title);
         }
       }
     }

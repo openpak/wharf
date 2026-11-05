@@ -15,9 +15,9 @@
 // the device name. The package file keeps the header XAM wrote.
 
 #include <cstring>
+#include <filesystem>
 #include <random>
 #include <vector>
-#include <filesystem>
 
 #include "third_party/mbedtls/include/mbedtls/md.h"
 #include "xenia/base/filesystem.h"
@@ -81,7 +81,8 @@ dword_result_t StfsCreateDevice_entry(dword_t params_ptr, dword_t params_size) {
   auto* params = memory->TranslateVirtual<uint8_t*>(params_ptr);
   const std::string name = util::TranslateAnsiPath(
       memory, reinterpret_cast<const X_ANSI_STRING*>(params + kParamName));
-  const uint32_t handle = xe::load_and_swap<uint32_t>(params + kParamFileHandle);
+  const uint32_t handle =
+      xe::load_and_swap<uint32_t>(params + kParamFileHandle);
   const uint32_t extension_size =
       xe::load_and_swap<uint32_t>(params + kParamExtensionSize);
 
@@ -216,10 +217,10 @@ dword_result_t StfsControlDevice_entry(dword_t device_ptr, dword_t code,
     const uint32_t extension = xe::load_and_swap<uint32_t>(
         memory->TranslateVirtual<uint8_t*>(device_ptr) + 0x18);
     auto* out = memory->TranslateVirtual<uint8_t*>(buffer_ptr);
-    const uint8_t* current =
-        extension ? memory->TranslateVirtual<uint8_t*>(
-                        extension + kExtensionVolumeDescriptor)
-                  : nullptr;
+    const uint8_t* current = extension
+                                 ? memory->TranslateVirtual<uint8_t*>(
+                                       extension + kExtensionVolumeDescriptor)
+                                 : nullptr;
     if (current && current[0] == kVolumeDescriptorSize) {
       std::memcpy(out, current, kVolumeDescriptorSize);
     } else {
@@ -244,9 +245,8 @@ DECLARE_XBOXKRNL_EXPORT1(IoDismountVolume, kFileSystem, kStub);
 // FALSE). The third argument receives nonzero when another console signed it.
 // Every package here was signed by this emulated console
 // (XeKeysConsolePrivateKeySign), so accept it as our own.
-dword_result_t XeKeysConsoleSignatureVerification_entry(lpvoid_t hash,
-                                                        lpvoid_t signature,
-                                                        lpdword_t other_console) {
+dword_result_t XeKeysConsoleSignatureVerification_entry(
+    lpvoid_t hash, lpvoid_t signature, lpdword_t other_console) {
   if (!hash || !signature) {
     return false;
   }
@@ -276,7 +276,9 @@ void HmacSha1(const uint8_t* data, size_t size, uint8_t out[20]) {
 
 void Rc4(const uint8_t* key, size_t key_size, uint8_t* data, size_t size) {
   uint8_t s[256];
-  for (int i = 0; i < 256; ++i) s[i] = uint8_t(i);
+  for (int i = 0; i < 256; ++i) {
+    s[i] = uint8_t(i);
+  }
   for (int i = 0, j = 0; i < 256; ++i) {
     j = (j + s[i] + key[i % key_size]) & 0xFF;
     std::swap(s[i], s[j]);
@@ -298,7 +300,9 @@ dword_result_t XeKeysObfuscate_entry(dword_t roaming, lpvoid_t input,
   }
   std::vector<uint8_t> plain(8 + input_size);
   std::random_device rd;
-  for (size_t i = 0; i < 8; ++i) plain[i] = uint8_t(rd());
+  for (size_t i = 0; i < 8; ++i) {
+    plain[i] = uint8_t(rd());
+  }
   std::memcpy(plain.data() + 8, input.as<uint8_t*>(), input_size);
   uint8_t digest[20], rc4_key[20];
   HmacSha1(plain.data(), plain.size(), digest);

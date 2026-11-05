@@ -9,8 +9,8 @@
 
 #include <deque>
 #include <set>
-#include <utility>
 #include <string>
+#include <utility>
 #include "xenia/base/logging.h"
 #include "xenia/emulator.h"
 #include "xenia/hid/input_system.h"
@@ -44,9 +44,9 @@ static uint32_t GamepadSlot(uint32_t device_id) {
   return (device_id >> 28) == 4 && n >= 1 && n <= 4 ? n - 1 : 0xFFFFFFFF;
 }
 
-dword_result_t XInputdGetCapabilities_entry(dword_t device_id,
-                                            pointer_t<hid::X_INPUT_CAPABILITIES> caps,
-                                            lpdword_t flags_out) {
+dword_result_t XInputdGetCapabilities_entry(
+    dword_t device_id, pointer_t<hid::X_INPUT_CAPABILITIES> caps,
+    lpdword_t flags_out) {
   if (flags_out) {
     *flags_out = 0;
   }
@@ -55,9 +55,9 @@ dword_result_t XInputdGetCapabilities_entry(dword_t device_id,
   }
   auto input_system = kernel_state()->emulator()->input_system();
   auto lock = input_system->lock();
-  return input_system->GetCapabilities(
-             GamepadSlot(device_id), hid::X_INPUT_FLAG::X_INPUT_FLAG_GAMEPAD, caps) ==
-                 X_ERROR_SUCCESS
+  return input_system->GetCapabilities(GamepadSlot(device_id),
+                                       hid::X_INPUT_FLAG::X_INPUT_FLAG_GAMEPAD,
+                                       caps) == X_ERROR_SUCCESS
              ? 0
              : 0xC000009D;
 }
@@ -125,7 +125,9 @@ dword_result_t XInputdReadState_entry(dword_t device_id,
             size_t pos = 0;
             while (pos < s.size()) {
               size_t next = s.find_first_of(",\n", pos);
-              if (next == std::string::npos) next = s.size();
+              if (next == std::string::npos) {
+                next = s.size();
+              }
               std::string b = s.substr(pos, next - pos);
               pos = next + 1;
               // Optional per-press hold in polls: "RIGHT:1".
@@ -134,13 +136,25 @@ dword_result_t XInputdReadState_entry(dword_t device_id,
                 hold_override = atoi(b.c_str() + colon + 1);
                 b.resize(colon);
               }
-              uint32_t mask = b == "A" ? 0x1000 : b == "B" ? 0x2000 : b == "X" ? 0x4000
-                            : b == "Y" ? 0x8000 : b == "UP" ? 1 : b == "DOWN" ? 2
-                            : b == "LEFT" ? 4 : b == "RIGHT" ? 8 : b == "START" ? 0x10
-                            : b == "BACK" ? 0x20 : b == "GUIDE" ? 0x400
-                            : b == "LB" ? 0x100 : b == "RB" ? 0x200
-                            : b == "LT" ? 0x10000 : b == "RT" ? 0x20000 : 0;
-              if (mask) queue.emplace_back(mask, hold_override);
+              uint32_t mask = b == "A"       ? 0x1000
+                              : b == "B"     ? 0x2000
+                              : b == "X"     ? 0x4000
+                              : b == "Y"     ? 0x8000
+                              : b == "UP"    ? 1
+                              : b == "DOWN"  ? 2
+                              : b == "LEFT"  ? 4
+                              : b == "RIGHT" ? 8
+                              : b == "START" ? 0x10
+                              : b == "BACK"  ? 0x20
+                              : b == "GUIDE" ? 0x400
+                              : b == "LB"    ? 0x100
+                              : b == "RB"    ? 0x200
+                              : b == "LT"    ? 0x10000
+                              : b == "RT"    ? 0x20000
+                                             : 0;
+              if (mask) {
+                queue.emplace_back(mask, hold_override);
+              }
             }
           }
           fclose(f);
@@ -178,12 +192,17 @@ dword_result_t XInputdReadState_entry(dword_t device_id,
         static bool saw_t3 = false;
         saw_t3 |= is_t3;
         if (!special && (is_t3 || !saw_t3)) {
-          read.gamepad.buttons = uint16_t(uint16_t(read.gamepad.buttons) | held);
+          read.gamepad.buttons =
+              uint16_t(uint16_t(read.gamepad.buttons) | held);
         } else if (!is_t3 && special) {
           read.gamepad.buttons =
               uint16_t(uint16_t(read.gamepad.buttons) | (held & 0x300));
-          if (held & 0x10000) read.gamepad.left_trigger = 255;
-          if (held & 0x20000) read.gamepad.right_trigger = 255;
+          if (held & 0x10000) {
+            read.gamepad.left_trigger = 255;
+          }
+          if (held & 0x20000) {
+            read.gamepad.right_trigger = 255;
+          }
         }
       }
       read.packet_number = uint32_t(read.packet_number) + phase;
