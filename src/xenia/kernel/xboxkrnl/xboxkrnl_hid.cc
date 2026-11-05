@@ -7,6 +7,11 @@
  ******************************************************************************
  */
 
+#include <deque>
+#include <set>
+#include <utility>
+#include <string>
+#include "xenia/base/logging.h"
 #include "xenia/emulator.h"
 #include "xenia/hid/input_system.h"
 #include "xenia/kernel/util/shim_utils.h"
@@ -97,6 +102,91 @@ dword_result_t XInputdReadState_entry(dword_t device_id,
       read.gamepad.thumb_ry = 0;
     } else if (keystroke_device_seen) {
       read.gamepad.buttons = uint16_t(buttons & kShoulders);
+    }
+  }
+  // Scripted test input (WHARF_PAD_FILE): write "A,DOWN,A" to the file; the
+  // buttons are pressed in order and the file is deleted once read. Unset =
+  // no effect. Used by the scratch/wharf w-pad.sh test scripts.
+  {
+    static const char* path = getenv("WHARF_PAD_FILE");
+    static std::deque<std::pair<uint32_t, int>> queue;
+    static uint32_t held = 0;
+    static uint32_t phase = 0;
+    if (path) {
+      static std::set<uint32_t> seen_devices;
+      if (seen_devices.insert(uint32_t(device_id)).second) {
+        XELOGI("WHARF_PAD polled device {:#x}", uint32_t(device_id));
+      }
+      if (queue.empty() && held == 0) {
+        if (FILE* f = fopen(path, "r")) {
+          char line[256] = {};
+          if (fgets(line, sizeof(line), f)) {
+            std::string s = line;
+            size_t pos = 0;
+            while (pos < s.size()) {
+              size_t next = s.find_first_of(",\n", pos);
+              if (next == std::string::npos) next = s.size();
+              std::string b = s.substr(pos, next - pos);
+              pos = next + 1;
+              // Optional per-press hold in polls: "RIGHT:1".
+              int hold_override = 0;
+              if (auto colon = b.find(':'); colon != std::string::npos) {
+                hold_override = atoi(b.c_str() + colon + 1);
+                b.resize(colon);
+              }
+              uint32_t mask = b == "A" ? 0x1000 : b == "B" ? 0x2000 : b == "X" ? 0x4000
+                            : b == "Y" ? 0x8000 : b == "UP" ? 1 : b == "DOWN" ? 2
+                            : b == "LEFT" ? 4 : b == "RIGHT" ? 8 : b == "START" ? 0x10
+                            : b == "BACK" ? 0x20 : b == "GUIDE" ? 0x400
+                            : b == "LB" ? 0x100 : b == "RB" ? 0x200
+                            : b == "LT" ? 0x10000 : b == "RT" ? 0x20000 : 0;
+              if (mask) queue.emplace_back(mask, hold_override);
+            }
+          }
+          fclose(f);
+          remove(path);
+        }
+      }
+      // Timing is counted in polls, not seconds, so a loaded host cannot
+      // swallow a press or stretch it into a key repeat: each press is held
+      // for WHARF_PAD_HOLD polls (default 1) and followed by WHARF_PAD_GAP
+      // polls (default 12) of release.
+      static const int hold_polls =
+          getenv("WHARF_PAD_HOLD") ? atoi(getenv("WHARF_PAD_HOLD")) : 1;
+      static const int gap_polls =
+          getenv("WHARF_PAD_GAP") ? atoi(getenv("WHARF_PAD_GAP")) : 12;
+      static int countdown = 0;
+      if (countdown > 0) {
+        --countdown;
+      } else if (held) {
+        held = 0;
+        countdown = gap_polls;
+        ++phase;
+      } else if (!queue.empty()) {
+        held = queue.front().first;
+        countdown = queue.front().second ? queue.front().second : hold_polls;
+        queue.pop_front();
+        XELOGI("WHARF_PAD press {:#x} device {:#x}", held, uint32_t(device_id));
+        ++phase;
+      }
+      // Type 3 (device id 0x43...) is the keystroke path and ignores triggers
+      // and shoulders; type 0 handles those. Buttons go to type 3 only,
+      // LT/RT/LB/RB to type 0 only, so no press is doubled.
+      const bool is_t3 = ((uint32_t(device_id) >> 24) & 0xF) == 3;
+      if (held) {
+        const uint32_t special = held & 0x30300;
+        static bool saw_t3 = false;
+        saw_t3 |= is_t3;
+        if (!special && (is_t3 || !saw_t3)) {
+          read.gamepad.buttons = uint16_t(uint16_t(read.gamepad.buttons) | held);
+        } else if (!is_t3 && special) {
+          read.gamepad.buttons =
+              uint16_t(uint16_t(read.gamepad.buttons) | (held & 0x300));
+          if (held & 0x10000) read.gamepad.left_trigger = 255;
+          if (held & 0x20000) read.gamepad.right_trigger = 255;
+        }
+      }
+      read.packet_number = uint32_t(read.packet_number) + phase;
     }
   }
   *state = read;

@@ -51,6 +51,13 @@ DEFINE_string(xsigner_public_key, "",
               "OpenPak XSigner public RSA-2048 modulus file (512 hex digits).",
               "Kernel");
 
+DEFINE_string(xsigner_firmware_digests, "",
+              "Comma-separated SHA-1 digests (40 hex digits) of the firmware's own "
+              "Microsoft-signed manifests. Slot 0 accepts these without a "
+              "signature check (the retail key is not in this tree); every other "
+              "slot-0 signature must verify against --xsigner_public_key.",
+              "Kernel");
+
 namespace xe {
 namespace kernel {
 namespace xboxkrnl {
@@ -1374,20 +1381,43 @@ DECLARE_XBOXKRNL_EXPORT1(XeKeysGetConsoleID, kNone, kImplemented);
 // system.manifest XAM reads at start-up; it rejects the manifest and the Live
 // logon's revision check fails when this returns 0). Wharf DEV STAND-IN: the
 // manifest's SHA-1 is still checked by XAM; the RSA step is accepted for key 0
-// because the matching public key is not in this tree.
+// because the matching public key is not in this tree. With --xsigner_public_key
+// set, key 0 is checked strictly (PKCS#1 v1.5 SHA-1) against the OpenPak
+// content key, like the console patch that replaces slot 0 on real hardware.
 dword_result_t XeKeysVerifyRSASignature_entry(dword_t key_index, lpvoid_t hash,
-                                              lpvoid_t signature) {
+                                              lpvoid_t signature,
+                                              const ppc_context_t& ctx) {
   if (!hash || !signature) {
     return 0;
   }
-  if ((key_index == 1 || key_index == 3) && !cvars::xsigner_public_key.empty()) {
+  if ((key_index <= 1 || key_index == 3) && !cvars::xsigner_public_key.empty()) {
     std::ifstream file(cvars::xsigner_public_key);
     std::string modulus;
     file >> modulus;
-    const bool verified = openpak_xsigner::Verify(
-        modulus, hash.as<uint8_t*>(), signature.as<uint8_t*>());
-    XELOGI("OpenPak content signature: key {} verified {}", uint32_t(key_index),
-           verified);
+    uint8_t sig[256];
+    std::memcpy(sig, signature.as<uint8_t*>(), sizeof(sig));
+    const bool verified =
+        openpak_xsigner::Verify(modulus, hash.as<uint8_t*>(), sig);
+    std::string digest_hex;
+    for (int i = 0; i < 20; ++i) {
+      digest_hex += fmt::format("{:02x}", hash.as<uint8_t*>()[i]);
+    }
+    XELOGI("OpenPak content signature: key {} verified {} digest {}",
+           uint32_t(key_index), verified, digest_hex);
+    if (!verified && key_index == 0) {
+      // XAM's manifest check (FUN_816EBE40: system.manifest and the online
+      // manifest) is strict: the firmware-shipped Microsoft-signed
+      // system.manifest is accepted by its pinned digest only, anything else
+      // must verify against the OpenPak key. Other slot-0 callers (firmware
+      // content packages) stay permissive: the retail key is not in this tree.
+      const uint32_t lr = uint32_t(ctx->lr);
+      const bool manifest_check = lr >= 0x816EBE40 && lr < 0x816EBF90;
+      const bool pinned =
+          cvars::xsigner_firmware_digests.find(digest_hex) != std::string::npos;
+      XELOGI("OpenPak content signature: key 0 lr {:08X} manifest_check {} pinned {}",
+             lr, manifest_check, pinned);
+      return (!manifest_check || pinned) ? 1 : 0;
+    }
     return verified ? 1 : 0;
   }
   if (key_index != 0) {
