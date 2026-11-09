@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <map>
@@ -20,8 +21,11 @@
 
 #ifdef XE_HAVE_SLIRP
 #include <arpa/inet.h>
+#include <fcntl.h>
+#include <netinet/in.h>
 #include <poll.h>
 #include <sys/eventfd.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 #include <libslirp.h>
@@ -57,6 +61,28 @@ DEFINE_string(nic_udp_port_map, "",
               "Lets an unprivileged listener stand in for privileged ports.",
               "Network");
 
+DEFINE_string(nic_guest_ip, "10.0.2.15",
+              "Virtual NIC: the address the router's DHCP hands this console.\n"
+              "Give each console on one nic_lan its own (10.0.2.15, .16...).",
+              "Network");
+
+DEFINE_string(
+    nic_lan_bind, "",
+    "Virtual NIC: plug the cable into a LAN shared with other Wharf\n"
+    "consoles too, host:port of this console's switch port (raw Ethernet\n"
+    "frames over UDP, e.g. 127.0.0.1:47101). Empty = router only.",
+    "Network");
+
+DEFINE_string(nic_lan_peers, "",
+              "Virtual NIC: switch ports of the other consoles on the LAN,\n"
+              "'127.0.0.1:47102,127.0.0.1:47103'.",
+              "Network");
+
+DEFINE_path(nic_pcap, "",
+            "Virtual NIC (dev): write every frame on the cable, both ways, to\n"
+            "this pcap file (Ethernet link type).",
+            "Network");
+
 // The network card as the real xam.xex sees it. XAM runs its own XNet stack
 // (ARP, DHCP, DNS, TCP/UDP) and talks to the kernel's NIC driver through the
 // Nic* exports:
@@ -75,7 +101,12 @@ DEFINE_string(nic_udp_port_map, "",
 //
 // The cable plugs into libslirp (user-mode NAT, no root): it answers DHCP
 // (guest 10.0.2.15, gateway 10.0.2.2, DNS 10.0.2.3), ARP, ICMP echo, TCP/UDP
-// through host sockets and DNS through the host resolver. A host thread
+// through host sockets and DNS through the host resolver. With nic_lan_bind
+// the same cable also reaches a switch shared with other Wharf consoles: each
+// console behind its own router port, all on one 10.0.2.0/24 segment and one
+// public address, like two consoles in one home. Frames to a MAC learned on
+// the LAN go there only; broadcast and multicast go to the LAN and the router;
+// everything else goes to the router. A host thread
 // ("NIC") polls slirp and runs the guest's rx and tx-done callbacks.
 //
 // OpenPak seam: every guest DNS query passes ResolveOverride() before it
@@ -127,6 +158,13 @@ struct NicState {
   std::deque<uint32_t> tx_done_queue;         // packets to complete
   std::atomic<bool> link_changed{false};      // tell XAM about the link once
   std::set<uint64_t> seen_udp;
+  // nic_lan_*: the shared switch. lan_macs = MACs seen as sources on the LAN.
+  int lan_fd = -1;
+  std::vector<sockaddr_in> lan_peers;
+  std::set<uint64_t> lan_macs;
+  std::mutex lan_mutex;
+  FILE* pcap = nullptr;
+  std::mutex pcap_mutex;
   std::vector<std::pair<std::string, uint32_t>> dns_hosts;  // name, ipv4 (net)
   // nic_tcp_port_map: guest-visible port -> host port. tcp_port_back maps
   // (guest source port << 16 | host port) -> guest-visible port so replies
@@ -174,7 +212,24 @@ void WakeNic(NicState& n) {
   [[maybe_unused]] auto ignored = write(n.wake_fd, &one, sizeof(one));
 }
 
+// nic_pcap: one record per frame (libpcap format, microsecond stamps).
+void PcapWrite(NicState& n, const uint8_t* frame, size_t length) {
+  if (!n.pcap) {
+    return;
+  }
+  const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+                      std::chrono::system_clock::now().time_since_epoch())
+                      .count();
+  const uint32_t rec[4] = {uint32_t(us / 1000000), uint32_t(us % 1000000),
+                           uint32_t(length), uint32_t(length)};
+  std::lock_guard<std::mutex> lock(n.pcap_mutex);
+  fwrite(rec, sizeof(rec), 1, n.pcap);
+  fwrite(frame, 1, length, n.pcap);
+  fflush(n.pcap);
+}
+
 void QueueRx(NicState& n, const uint8_t* frame, size_t length) {
+  PcapWrite(n, frame, length);
   {
     std::lock_guard<std::mutex> lock(n.queue_mutex);
     n.rx_queue.emplace_back(frame, frame + length);
@@ -356,6 +411,67 @@ void UnmapUdpFromHost(NicState& n, uint8_t* f, size_t length) {
   if (Be16(udp + 6) != 0) {
     PutBe16(udp + 6, UdpChecksum(ip, ihl, total));
   }
+}
+
+uint64_t Mac(const uint8_t* p) {
+  uint64_t v = 0;
+  for (int i = 0; i < 6; ++i) {
+    v = v << 8 | p[i];
+  }
+  return v;
+}
+
+bool ParseHostPort(const std::string& text, sockaddr_in* out) {
+  const size_t colon = text.rfind(':');
+  if (colon == std::string::npos) {
+    return false;
+  }
+  *out = {};
+  out->sin_family = AF_INET;
+  const int port = atoi(text.c_str() + colon + 1);
+  out->sin_port = htons(uint16_t(port));
+  return port > 0 && port < 65536 &&
+         inet_pton(AF_INET, text.substr(0, colon).c_str(), &out->sin_addr) == 1;
+}
+
+// Switch -> guest. ponytail: every frame a peer sends is delivered and XAM's
+// own receive filter drops unicast for other MACs; with more than two consoles
+// a per-port MAC filter here would stop the flooding.
+void ReceiveLan(NicState& n) {
+  uint8_t buf[kRxSlotSize];
+  for (;;) {
+    const ssize_t len = recv(n.lan_fd, buf, sizeof(buf), MSG_DONTWAIT);
+    if (len < 14) {
+      if (len < 0) {
+        return;
+      }
+      continue;
+    }
+    {
+      std::lock_guard<std::mutex> lock(n.lan_mutex);
+      if (n.lan_macs.insert(Mac(buf + 6)).second) {
+        XELOGI("NIC lan: console {:012X} on the LAN", Mac(buf + 6));
+      }
+    }
+    QueueRx(n, buf, size_t(len));
+  }
+}
+
+// Guest -> switch. True if the router must not see the frame.
+bool SendLan(NicState& n, const uint8_t* f, size_t length) {
+  const bool group = f[0] & 1;
+  bool lan_only;
+  {
+    std::lock_guard<std::mutex> lock(n.lan_mutex);
+    lan_only = !group && n.lan_macs.count(Mac(f));
+  }
+  if (group || lan_only) {
+    for (const auto& peer : n.lan_peers) {
+      sendto(n.lan_fd, f, length, 0, reinterpret_cast<const sockaddr*>(&peer),
+             sizeof(peer));
+    }
+  }
+  return lan_only;
 }
 
 // OpenPak seam, see the header comment.
@@ -655,6 +771,9 @@ int NicThreadMain() {
     uint32_t timeout = 500;
     n.fds.clear();
     n.fds.push_back({n.wake_fd, POLLIN, 0});
+    if (n.lan_fd >= 0) {
+      n.fds.push_back({n.lan_fd, POLLIN, 0});
+    }
     {
       std::lock_guard<std::mutex> lock(n.slirp_mutex);
       slirp_pollfds_fill_socket(n.slirp, &timeout, SlirpAddPoll, &n);
@@ -664,6 +783,9 @@ int NicThreadMain() {
       uint64_t counter;
       [[maybe_unused]] auto ignored =
           read(n.wake_fd, &counter, sizeof(counter));
+    }
+    if (n.lan_fd >= 0 && (n.fds[1].revents & POLLIN)) {
+      ReceiveLan(n);
     }
     {
       std::lock_guard<std::mutex> lock(n.slirp_mutex);
@@ -685,7 +807,10 @@ void StartBackend(NicState& n) {
   inet_pton(AF_INET, "10.0.2.0", &config.vnetwork);
   inet_pton(AF_INET, "255.255.255.0", &config.vnetmask);
   inet_pton(AF_INET, "10.0.2.2", &config.vhost);
-  inet_pton(AF_INET, "10.0.2.15", &config.vdhcp_start);
+  if (inet_pton(AF_INET, cvars::nic_guest_ip.c_str(), &config.vdhcp_start) !=
+      1) {
+    inet_pton(AF_INET, "10.0.2.15", &config.vdhcp_start);
+  }
   inet_pton(AF_INET, "10.0.2.3", &config.vnameserver);
   config.vhostname = "xbox360";
   config.if_mtu = 1500;
@@ -765,6 +890,47 @@ void StartBackend(NicState& n) {
     pos = next + 1;
   }
 
+  if (!cvars::nic_pcap.empty()) {
+    n.pcap = fopen(cvars::nic_pcap.string().c_str(), "wb");
+    const uint32_t header[6] = {0xA1B2C3D4, 0x00040002, 0, 0, 65535, 1};
+    if (n.pcap) {
+      fwrite(header, sizeof(header), 1, n.pcap);
+      XELOGI("NIC pcap: {}", cvars::nic_pcap.string());
+    }
+  }
+
+  // nic_lan_bind / nic_lan_peers: the shared switch.
+  sockaddr_in bind_address;
+  if (!cvars::nic_lan_bind.empty() &&
+      ParseHostPort(cvars::nic_lan_bind, &bind_address)) {
+    const std::string peers = cvars::nic_lan_peers;
+    for (size_t pos = 0; pos < peers.size();) {
+      size_t next = peers.find_first_of(";,", pos);
+      if (next == std::string::npos) {
+        next = peers.size();
+      }
+      sockaddr_in peer;
+      if (ParseHostPort(peers.substr(pos, next - pos), &peer)) {
+        n.lan_peers.push_back(peer);
+      }
+      pos = next + 1;
+    }
+    n.lan_fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+    if (n.lan_fd < 0 ||
+        bind(n.lan_fd, reinterpret_cast<const sockaddr*>(&bind_address),
+             sizeof(bind_address)) != 0) {
+      XELOGE("NIC lan: cannot bind {}, LAN cable unplugged",
+             cvars::nic_lan_bind);
+      if (n.lan_fd >= 0) {
+        close(n.lan_fd);
+      }
+      n.lan_fd = -1;
+    } else {
+      XELOGI("NIC lan: switch port {}, {} other port(s)", cvars::nic_lan_bind,
+             n.lan_peers.size());
+    }
+  }
+
   n.link_changed = true;
   n.running = true;
   n.thread = object_ref<XHostThread>(new XHostThread(
@@ -773,8 +939,8 @@ void StartBackend(NicState& n) {
   n.thread->set_can_debugger_suspend(true);
   n.thread->set_name("NIC");
   n.thread->Create();
-  XELOGI("NIC: libslirp {} up, guest gets 10.0.2.15 gw 10.0.2.2 dns 10.0.2.3",
-         slirp_version_string());
+  XELOGI("NIC: libslirp {} up, guest gets {} gw 10.0.2.2 dns 10.0.2.3",
+         slirp_version_string(), cvars::nic_guest_ip);
 }
 
 #endif  // XE_HAVE_SLIRP
@@ -833,7 +999,10 @@ dword_result_t NicXmit_entry(dword_t handle, dword_t vlan, dword_t frame_ptr,
         kernel_state()->memory()->TranslateVirtual<const uint8_t*>(frame_ptr),
         kernel_state()->memory()->TranslateVirtual<const uint8_t*>(frame_ptr) +
             length);
-    if (!InspectGuestFrame(n, frame.data(), frame.size())) {
+    PcapWrite(n, frame.data(), frame.size());
+    if (n.lan_fd >= 0 && SendLan(n, frame.data(), frame.size())) {
+      // a frame for another console on the LAN; the router never sees it
+    } else if (!InspectGuestFrame(n, frame.data(), frame.size())) {
       if (!n.tcp_port_map.empty()) {
         MapTcpToHost(n, frame.data(), frame.size());
       }
