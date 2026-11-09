@@ -2410,18 +2410,23 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
   auto null_paths = {std::string("\\Partition0"), std::string("\\Partition1"),
                      std::string("\\Cache0"), std::string("\\Cache1")};
   auto null_device =
-      std::make_unique<vfs::NullDevice>("\\Device\\Harddisk0", null_paths);
+      std::make_unique<vfs::NullDevice>("\\Device\\Harddisk0", null_paths,
+                                        128 * 1024);
   if (null_device->Initialize()) {
     file_system_->RegisterDevice(std::move(null_device));
   }
 
   // XAM's device monitor probes "\Device\Harddisk0\Partition1\" with
   // NtQueryFullAttributesFile; unless the root exists the HDD is left in state
-  // 4 and the content layer reports no storage device.
+  // 4 and the content layer reports no storage device. Both this root and the
+  // \Device\Harddisk0 device above (XAM's enumerator opens "...\Partition1"
+  // through it) report the HDD's size and free space; games check that before
+  // saving, so they report the same 8 GiB as the Content host device.
   {
     auto hdd_root =
         std::make_unique<vfs::NullDevice>("\\Device\\Harddisk0\\Partition1",
-                                          std::initializer_list<std::string>{});
+                                          std::initializer_list<std::string>{},
+                                          128 * 1024);
     if (hdd_root->Initialize()) {
       file_system_->RegisterDevice(std::move(hdd_root));
     }

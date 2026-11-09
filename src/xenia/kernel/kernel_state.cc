@@ -723,6 +723,19 @@ object_ref<UserModule> KernelState::LoadUserModule(
           xe::utf8::find_base_guest_path(path), "$flash_" + std::string(name));
       status = module->LoadFromFile(flash_path);
     }
+    if (XFAILED(status) && real_xam_module_ && name == raw_name) {
+      // A bare system module name (signin.xex, hud.xex) asked for while a
+      // title runs: the title's package does not hold it; the console finds
+      // it on the system flash, which \SystemRoot names.
+      for (const auto& candidate :
+           {std::string("\\SystemRoot\\") + std::string(name),
+            std::string("\\SystemRoot\\$flash_") + std::string(name)}) {
+        status = module->LoadFromFile(candidate);
+        if (XSUCCEEDED(status)) {
+          break;
+        }
+      }
+    }
     if (XFAILED(status)) {
       object_table()->ReleaseHandle(module->handle());
       return nullptr;

@@ -22,7 +22,8 @@ class NullEntry;
 class NullDevice : public Device {
  public:
   NullDevice(const std::string& mount_path,
-             const std::initializer_list<std::string>& null_paths);
+             const std::initializer_list<std::string>& null_paths,
+             uint32_t allocation_units = 0x10);
   ~NullDevice() override;
 
   bool Initialize() override;
@@ -37,8 +38,12 @@ class NullDevice : public Device {
   uint32_t attributes() const override { return 0; }
   uint32_t component_name_max_length() const override { return 40; }
 
-  uint32_t total_allocation_units() const override { return 0x10; }
-  uint32_t available_allocation_units() const override { return 0x10; }
+  // 64 KiB units (see below). The default 1 MiB suits the raw-partition
+  // stand-ins; a device that fronts real storage passes its size.
+  uint32_t total_allocation_units() const override { return allocation_units_; }
+  uint32_t available_allocation_units() const override {
+    return allocation_units_;
+  }
 
   // STFC/cache code seems to require the product of the next two to equal
   // 0x10000
@@ -51,6 +56,7 @@ class NullDevice : public Device {
   std::string name_;
   std::unique_ptr<Entry> root_entry_;
   std::vector<std::string> null_paths_;
+  uint32_t allocation_units_;
 };
 
 }  // namespace vfs
