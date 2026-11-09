@@ -75,6 +75,32 @@ dword_result_t XexGetModuleHandle_entry(lpstring_t module_name,
 }
 DECLARE_XBOXKRNL_EXPORT1(XexGetModuleHandle, kModules, kImplemented);
 
+// XAM checks a title's default.xex with this before it launches it (e.g. a
+// Games on Demand title from My Games); a failure ends the launch with
+// "Unsupported Disc". The console kernel checks the header structure and its
+// RSA signature; the retail XEX key is not in this tree (the loader does not
+// check it either), so only the structure is checked here: XEX2 magic, header
+// and security-info offsets inside the buffer XAM read.
+static dword_result_t XexVerifyImageHeaders_entry(lpvoid_t header,
+                                                  dword_t size) {
+  if (!header || size < 0x18) {
+    return X_STATUS_INVALID_PARAMETER;
+  }
+  const auto* words = header.as<const xe::be<uint32_t>*>();
+  const uint32_t magic = words[0];
+  const uint32_t header_size = words[2];
+  const uint32_t security_offset = words[4];
+  if (magic != 0x58455832u || header_size > size ||
+      security_offset + 0x184 > size) {
+    XELOGW("XexVerifyImageHeaders: rejected magic {:08X} size {:X}/{:X} "
+           "security {:X}",
+           magic, header_size, uint32_t(size), security_offset);
+    return X_STATUS_INVALID_IMAGE_FORMAT;
+  }
+  return X_STATUS_SUCCESS;
+}
+DECLARE_XBOXKRNL_EXPORT1(XexVerifyImageHeaders, kModules, kImplemented);
+
 dword_result_t XexGetModuleSection_entry(lpvoid_t hmodule, lpstring_t name,
                                          lpdword_t data_ptr,
                                          lpdword_t size_ptr) {
