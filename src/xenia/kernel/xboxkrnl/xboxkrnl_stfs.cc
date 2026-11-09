@@ -71,6 +71,23 @@ uint32_t AllocDeviceObject(uint32_t extension_size) {
   return device_ptr;
 }
 
+// True when the package file already holds an STFS file system (its volume
+// descriptor counts allocated blocks). Packages XAM creates here have only the
+// header XAM wrote (no STFS writer in Wharf), with zero allocated blocks.
+bool PackageHasStfsData(const std::filesystem::path& path) {
+  FILE* file = xe::filesystem::OpenFile(path, "rb");
+  if (!file) {
+    return false;
+  }
+  uint8_t header[0x3A9] = {};
+  const bool read = fread(header, 1, sizeof(header), file) == sizeof(header);
+  fclose(file);
+  if (!read || header[0x379] != 0x24) {  // volume descriptor size
+    return false;
+  }
+  return xe::load_and_swap<uint32_t>(header + 0x379 + 0x1C) != 0;
+}
+
 }  // namespace
 
 dword_result_t StfsCreateDevice_entry(dword_t params_ptr, dword_t params_size) {
@@ -95,20 +112,38 @@ dword_result_t StfsCreateDevice_entry(dword_t params_ptr, dword_t params_size) {
     return X_STATUS_INVALID_PARAMETER;
   }
 
-  auto host_dir = host_entry->host_path();
-  host_dir += ".stfs";
-  std::error_code ec;
-  std::filesystem::create_directories(host_dir, ec);
-
   auto* fs = kernel_state()->file_system();
-  if (fs->GetDevice(name)) {
-    fs->UnregisterDevice(name);
-  }
-  auto device = std::make_unique<vfs::HostPathDevice>(name, host_dir, false);
-  if (!device->Initialize() || !fs->RegisterDevice(std::move(device))) {
-    XELOGE("StfsCreateDevice({}): cannot mount {}", name,
-           xe::path_to_utf8(host_dir));
-    return X_STATUS_UNSUCCESSFUL;
+  const auto& package_path = host_entry->host_path();
+  if (PackageHasStfsData(package_path)) {
+    // An existing package (an installed title, a firmware PIRS, ...): serve
+    // its own file system, as the console's STFS driver does.
+    auto device =
+        vfs::XContentContainerDevice::CreateContentDevice(name, package_path);
+    if (!device || !device->Initialize()) {
+      XELOGE("StfsCreateDevice({}): cannot read STFS package {}", name,
+             xe::path_to_utf8(package_path));
+      return X_STATUS_UNSUCCESSFUL;
+    }
+    if (fs->GetDevice(name)) {
+      fs->UnregisterDevice(name);
+    }
+    if (!fs->RegisterDevice(std::move(device))) {
+      return X_STATUS_UNSUCCESSFUL;
+    }
+  } else {
+    auto host_dir = package_path;
+    host_dir += ".stfs";
+    std::error_code ec;
+    std::filesystem::create_directories(host_dir, ec);
+    if (fs->GetDevice(name)) {
+      fs->UnregisterDevice(name);
+    }
+    auto device = std::make_unique<vfs::HostPathDevice>(name, host_dir, false);
+    if (!device->Initialize() || !fs->RegisterDevice(std::move(device))) {
+      XELOGE("StfsCreateDevice({}): cannot mount {}", name,
+             xe::path_to_utf8(host_dir));
+      return X_STATUS_UNSUCCESSFUL;
+    }
   }
 
   const uint32_t device_ptr = AllocDeviceObject(extension_size);
@@ -120,7 +155,7 @@ dword_result_t StfsCreateDevice_entry(dword_t params_ptr, dword_t params_size) {
   xe::store_and_swap<uint32_t>(params + kParamExtensionOut,
                                device_ptr + kDeviceObjectSize);
   XELOGI("StfsCreateDevice({}) -> {} (device {:08X}, extension {:X} bytes)",
-         name, xe::path_to_utf8(host_dir), device_ptr, extension_size);
+         name, xe::path_to_utf8(package_path), device_ptr, extension_size);
   return X_STATUS_SUCCESS;
 }
 DECLARE_XBOXKRNL_EXPORT1(StfsCreateDevice, kFileSystem, kImplemented);
