@@ -636,6 +636,8 @@ class CommandProcessor {
   kernel::KernelState* kernel_state_ = nullptr;
   GraphicsSystem* graphics_system_ = nullptr;
   RegisterFile* XE_RESTRICT register_file_ = nullptr;
+  // Register snapshot around XAM's system UI (PM4_XE_SAVE/RESTORE_REGISTERS).
+  std::vector<uint32_t>* saved_registers_ = nullptr;
 
   ZPDMode zpd_mode_ = ZPDMode::kFast;
 

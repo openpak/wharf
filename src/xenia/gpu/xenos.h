@@ -1686,6 +1686,8 @@ enum Type3Opcode {
   PM4_INTERRUPT             = 0x54,   // generate interrupt from the command stream
 
   PM4_XE_SWAP               = 0x64,   // Xenia only: VdSwap uses this to trigger a swap.
+  PM4_XE_SAVE_REGISTERS     = 0x65,   // Wharf only: snapshot the register file (before XAM's system UI).
+  PM4_XE_RESTORE_REGISTERS  = 0x66,   // Wharf only: write the snapshot back (after XAM's system UI).
 
   PM4_IM_STORE              = 0x2c,   // copy sequencer instruction memory to system memory
 

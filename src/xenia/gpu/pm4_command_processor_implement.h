@@ -508,6 +508,37 @@ bool COMMAND_PROCESSOR::ExecutePacketType3(uint32_t packet) XE_RESTRICT {
       case PM4_XE_SWAP:
         result = COMMAND_PROCESSOR::ExecutePacketType3_XE_SWAP(packet, count);
         break;
+      case PM4_XE_SAVE_REGISTERS: {
+        // XAM's system UI runs inside the title's ring (VdSwap) and changes
+        // render target, window, copy and fetch state; the title expects
+        // its own state afterwards, as on the console.
+        static std::vector<uint32_t> saved;
+        saved.assign(register_file_->values,
+                     register_file_->values + RegisterFile::kRegisterCount);
+        saved_registers_ = &saved;
+        reader_.AdvanceRead(count * sizeof(uint32_t));
+        result = true;
+      } break;
+      case PM4_XE_RESTORE_REGISTERS: {
+        if (saved_registers_) {
+          const auto& saved = *saved_registers_;
+          for (uint32_t i = 0; i < RegisterFile::kRegisterCount; ++i) {
+            // Not the registers with side effects (scratch registers that
+            // XAM's buffer uses to signal completion, coherency, gamma LUT).
+            const bool special =
+                (i - XE_GPU_REG_SCRATCH_REG0 < 8) ||
+                i == XE_GPU_REG_COHER_STATUS_HOST ||
+                (i - XE_GPU_REG_DC_LUT_RW_INDEX <=
+                 XE_GPU_REG_DC_LUT_30_COLOR - XE_GPU_REG_DC_LUT_RW_INDEX);
+            if (!special && register_file_->values[i] != saved[i]) {
+              COMMAND_PROCESSOR::WriteRegister(i, saved[i]);
+            }
+          }
+          saved_registers_ = nullptr;
+        }
+        reader_.AdvanceRead(count * sizeof(uint32_t));
+        result = true;
+      } break;
       case PM4_INDIRECT_BUFFER:
       case PM4_INDIRECT_BUFFER_PFD:
         result = COMMAND_PROCESSOR::ExecutePacketType3_INDIRECT_BUFFER(packet,

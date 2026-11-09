@@ -620,9 +620,8 @@ void VdSwap_entry(
   // and may leave fetch constant 0 bound to its own textures, which the swap
   // rewrites below.
   if (run_xam_buffer) {
-    dwords[offset++] = xenos::MakePacketType3(xenos::PM4_INDIRECT_BUFFER, 2);
-    dwords[offset++] = xam_buffer.command_physical_address;
-    dwords[offset++] = xam_buffer.command_dword_count;
+    dwords[offset++] = xenos::MakePacketType3(xenos::PM4_XE_SAVE_REGISTERS, 1);
+    dwords[offset++] = 0;
 
     // Every XAM frame is self-contained: it redraws only the scene currently
     // shown (a closed dialog is simply not drawn again, a frame without UI
@@ -631,11 +630,14 @@ void VdSwap_entry(
     // is scratch the title overwrites every frame, so nothing from an earlier
     // XAM frame survives; here the dashboard renders elsewhere in EDRAM and
     // the region would accumulate every frame ever drawn (stale dialogs and
-    // legends staying on screen). Leave it transparent for the next frame: a
-    // resolve of the region with the clear flag set, after XAM's frame. Its
-    // copy goes to a scratch buffer in a converted format, not the overlay:
-    // a second direct host resolve into the overlay with the clear left the
-    // texture cache showing a stale overlay.
+    // legends staying on screen), and a title that renders at base 0 leaves
+    // its own (opaque) frame there, which XAM's resolve would then copy into
+    // the overlay. Make it transparent right before XAM's frame: a resolve of
+    // the region with the clear flag set (the title has already resolved its
+    // frame to the front buffer). Its copy goes to a scratch buffer in a
+    // converted format, not the overlay: a second direct host resolve into the
+    // overlay with the clear left the texture cache showing a stale overlay.
+    // The title's register state is saved before and restored after.
     static uint32_t clear_vertices = 0;  // physical, three (x, y) floats
     static uint32_t clear_vertices_width = 0, clear_vertices_height = 0;
     static uint32_t clear_copy_dest = 0;  // physical scratch, overlay-sized
@@ -701,6 +703,13 @@ void VdSwap_entry(
           xenos::MakePacketType0(gpu::XE_GPU_REG_RB_MODECONTROL, 1);
       dwords[offset++] = uint32_t(xenos::EdramMode::kColorDepth);
     }
+    // XAM's frame runs on the cleared region (see above).
+    dwords[offset++] = xenos::MakePacketType3(xenos::PM4_INDIRECT_BUFFER, 2);
+    dwords[offset++] = xam_buffer.command_physical_address;
+    dwords[offset++] = xam_buffer.command_dword_count;
+    dwords[offset++] =
+        xenos::MakePacketType3(xenos::PM4_XE_RESTORE_REGISTERS, 1);
+    dwords[offset++] = 0;
   }
 
   // Write in the GPU texture fetch.
