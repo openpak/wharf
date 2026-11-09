@@ -2975,16 +2975,15 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
     // from a helper thread. It needs app 0xFE (record 81AA0BA0, created by
     // XAM's start-up thread FUN_816BDE90) and the hive's
     // SOMRevision/UpdateUriRoot1, which arrive with the Live config; before
-    // that the call fails (HRESULT 8B05000E surfaces as 8007065B). Retry until
-    // \sap\online exists.
+    // that the call fails (HRESULT 8B05000E surfaces as 8007065B). The manifest
+    // store (state at +0x464, read by 8168BAF0) lives in RAM, so a real console
+    // refreshes it at every logon even when \sap\online already holds a copy;
+    // until it does, My Games and other manifest users fail with 8B050007.
+    // Retry every boot until the call succeeds.
     if (!getenv("WHARF_NOSOMREFRESH")) {
       std::thread([this]() {
-        const auto sap_online = storage_root_ / "sap" / "online";
         for (int attempt = 0; attempt < 240; ++attempt) {
           std::this_thread::sleep_for(std::chrono::seconds(15));
-          if (std::filesystem::exists(sap_online)) {
-            break;
-          }
           const auto* rec =
               memory()->TranslateVirtual<const xe::be<uint32_t>*>(0x81AA0BA8);
           if (rec[0] == 0 || rec[2] == 0) {
@@ -3012,8 +3011,13 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
           som->Resume();
           uint64_t som_timeout = static_cast<uint64_t>(-10 * 10000000LL);
           const X_STATUS som_wait = som->Wait(0, 0, 0, &som_timeout);
-          XELOGI("real_xam: som refresh attempt {} wait status {:08X}", attempt,
-                 som_wait);
+          const auto result = static_cast<int32_t>(
+              uint32_t(som->guest_object<kernel::X_KTHREAD>()->exit_status));
+          XELOGI("real_xam: som refresh attempt {} wait status {:08X} result {:08X}",
+                 attempt, som_wait, static_cast<uint32_t>(result));
+          if (som_wait == X_STATUS_SUCCESS && result >= 0) {
+            break;
+          }
         }
       }).detach();
     }
@@ -3052,6 +3056,33 @@ X_STATUS Emulator::PrepareLaunch(const std::filesystem::path& path,
           // created, so the dashboard receives its initial media notification
           // and starts the content scan. A raw storage broadcast is too early
           // here and is lost without the native pending listener.
+          // On a console the internal HDD exists from kernel boot, so XAM's
+          // device monitor has marked it ready before the loader starts the
+          // dashboard. Here the monitor's first probe races the dashboard's
+          // start-up; when it loses, the dashboard's single start-up scan
+          // finds no storage and My Games stays empty. Wait for the HDD entry
+          // (device table 0x81A9CB30, 20 x 0xA0, type +0x7C == 1, state +0x80
+          // == 3 ready) like the native ordering, at most 10 s.
+          {
+            constexpr uint32_t kXamDeviceTable = 0x81A9CB30;
+            bool hdd_ready = false;
+            for (int i = 0; i < 1000 && !hdd_ready; ++i) {
+              for (uint32_t slot = 0; slot < 20; ++slot) {
+                const auto* entry =
+                    memory()->TranslateVirtual<const xe::be<uint32_t>*>(
+                        kXamDeviceTable + slot * 0xA0);
+                if (entry[0x7C / 4] == 1u && entry[0x80 / 4] == 3u) {
+                  hdd_ready = true;
+                  break;
+                }
+              }
+              if (!hdd_ready) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+              }
+            }
+            XELOGI("real_xam: internal HDD ready before dashboard start: {}",
+                   hdd_ready);
+          }
           constexpr uint32_t kXamTitleNotifications = 0x816A94E0;
           const auto* notify_insn =
               memory()->TranslateVirtual<const xe::be<uint32_t>*>(
