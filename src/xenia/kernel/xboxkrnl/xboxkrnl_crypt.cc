@@ -8,6 +8,7 @@
 */
 
 #include <algorithm>
+#include <atomic>
 #include <mutex>
 #include <random>
 #include <tuple>
@@ -1410,6 +1411,32 @@ dword_result_t XeKeysHmacShaUsingKey_entry(lpvoid_t obscured_key,
   return X_STATUS_SUCCESS;
 }
 DECLARE_XBOXKRNL_EXPORT1(XeKeysHmacShaUsingKey, kNone, kImplemented);
+
+// Protected flags: kernel-held bits. XAM sets flag 0 at title start; flag 2
+// makes XAM authenticate the disc before an XGD2 media-only title may run
+// (FUN_816adb50: IOCTL 0x240a0 to \Device\CdRom0). See docs/provenance.md.
+static std::atomic<uint32_t> protected_flags{0};
+
+void SetProtectedFlag(uint32_t flag, bool value) {
+  if (flag >= 32) {
+    return;
+  }
+  if (value) {
+    protected_flags |= 1u << flag;
+  } else {
+    protected_flags &= ~(1u << flag);
+  }
+}
+
+dword_result_t XeKeysGetProtectedFlag_entry(dword_t flag) {
+  return flag < 32 && ((protected_flags >> flag) & 1);
+}
+DECLARE_XBOXKRNL_EXPORT1(XeKeysGetProtectedFlag, kNone, kImplemented);
+
+void XeKeysSetProtectedFlag_entry(dword_t flag, dword_t value) {
+  SetProtectedFlag(flag, value != 0);
+}
+DECLARE_XBOXKRNL_EXPORT1(XeKeysSetProtectedFlag, kNone, kImplemented);
 
 dword_result_t XeKeysGetConsoleType_entry(lpdword_t type_out) {
   *type_out = Retail;

@@ -23,6 +23,9 @@ bool XeKeysHmacSha(uint32_t key_num, const uint8_t* inp_1, uint32_t inp_1_size,
                    const uint8_t* inp_3, uint32_t inp_3_size, uint8_t* out,
                    uint32_t out_size);
 
+// The kernel's protected flags (XeKeysGet/SetProtectedFlag).
+void SetProtectedFlag(uint32_t flag, bool value);
+
 }  // namespace xboxkrnl
 }  // namespace kernel
 }  // namespace xe

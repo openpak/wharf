@@ -15,8 +15,16 @@
 #include "xenia/base/xxhash.h"
 #include "xenia/cpu/elf_module.h"
 #include "xenia/emulator.h"
+#include "xenia/kernel/xboxkrnl/xboxkrnl_crypt.h"
 
 DECLARE_bool(dump_xex);
+
+DEFINE_bool(modded_kernel_media_check_bypass, true,
+            "Skip the kernel's disc-only media check when loading a title, as "
+            "XeUnshackle/RGH kernels do (lets Games on Demand copies of "
+            "XGD2-only discs run). Off: an XGD2 media-only title sets protected "
+            "flag 2, so XAM demands disc authentication like a stock kernel.",
+            "Kernel");
 
 DEFINE_bool(dump_module_images, false,
             "Dump each loaded module's decrypted image to "
@@ -254,6 +262,16 @@ X_STATUS UserModule::LoadContinue() {
   xe::store_and_swap<uint32_t>(
       xex_header_ptr + offsetof(xex2_header, security_offset),
       guest_xex_header_ + static_cast<uint32_t>(header->security_offset));
+
+  // Stock XexpLoadXexHeaders verifies the media type of a disc-only title;
+  // XeUnshackle patches that call to return 1. Wharf has no disc drive, so the
+  // only visible part is protected flag 2 (docs/provenance.md).
+  if (is_executable()) {
+    const bool media_only =
+        (uint32_t(security_header->image_flags) & XEX_IMAGE_XGD2_MEDIA_ONLY) != 0;
+    xboxkrnl::SetProtectedFlag(
+        2, media_only && !cvars::modded_kernel_media_check_bypass);
+  }
 
   // Cache some commonly used headers...
   this->xex_module()->GetOptHeader(XEX_HEADER_ENTRY_POINT, &entry_point_);
