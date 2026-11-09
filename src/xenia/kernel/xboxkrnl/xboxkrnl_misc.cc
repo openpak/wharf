@@ -117,6 +117,20 @@ void KeRestoreFloatingPointState_entry(const ppc_context_t& ctx) {
 }
 DECLARE_XBOXKRNL_EXPORT1(KeRestoreFloatingPointState, kNone, kSketchy);
 
+// Hypervisor expansions (HvxExpansionCall) are installed by signed system
+// updates; this console has none installed, so every call fails (the exact
+// status the hypervisor returns for a missing expansion is inferred). XAM
+// probes expansion 'PV03' (0x50563033, command 1) for presence and switches
+// its content checks on the result; without this export the guest kept its
+// own r3 (the id, a positive value) and XAM took the expansion as present.
+static dword_result_t ExExpansionCall_entry(dword_t expansion_id,
+                                            dword_t command) {
+  XELOGD("ExExpansionCall({:08X}, {}) -> not installed",
+         uint32_t(expansion_id), uint32_t(command));
+  return X_STATUS_NOT_FOUND;
+}
+DECLARE_XBOXKRNL_EXPORT1(ExExpansionCall, kNone, kImplemented);
+
 static qword_result_t KeQueryInterruptTime_entry(const ppc_context_t& ctx) {
   auto kstate = ctx->kernel_state;
   uint32_t ts_bundle = kstate->GetKeTimestampBundle();
